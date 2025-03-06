@@ -62,3 +62,38 @@ public class AccountController {
         return mapping;
     }
 }
+
+private MappingJacksonValue applyFiltering(Object responseData, String includeOnly, String excludeOnly) {
+    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+
+    Set<String> includeFields = (includeOnly != null && !includeOnly.isEmpty()) ?
+            new HashSet<>(Arrays.asList(includeOnly.split(","))) : null;
+
+    Set<String> excludeFields = (excludeOnly != null && !excludeOnly.isEmpty()) ?
+            new HashSet<>(Arrays.asList(excludeOnly.split(","))) : null;
+
+    if (includeFields != null) {
+        // ✅ Include parent fields explicitly to ensure nested fields work
+        Set<String> adjustedIncludeFields = new HashSet<>();
+        for (String field : includeFields) {
+            String[] fieldParts = field.split("\\.");
+            adjustedIncludeFields.add(fieldParts[0]); // Ensure the parent field is included
+            adjustedIncludeFields.add(field);         // Keep the actual nested field
+        }
+        System.out.println("Applying INCLUDE ONLY filter: " + adjustedIncludeFields);
+        filterProvider.addFilter("dynamicFilter",
+                SimpleBeanPropertyFilter.filterOutAllExcept(adjustedIncludeFields));
+    } else if (excludeFields != null) {
+        System.out.println("Applying EXCLUDE ONLY filter: " + excludeFields);
+        filterProvider.addFilter("dynamicFilter",
+                SimpleBeanPropertyFilter.serializeAllExcept(excludeFields));
+    } else {
+        System.out.println("No filters applied. Returning all fields.");
+        filterProvider.addFilter("dynamicFilter", SimpleBeanPropertyFilter.serializeAll());
+    }
+
+    MappingJacksonValue mapping = new MappingJacksonValue(responseData);
+    mapping.setFilters(filterProvider);
+    return mapping;
+}
+
