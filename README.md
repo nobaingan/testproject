@@ -233,3 +233,64 @@ public class AccountController {
 - If you **only need to filter controller responses**, use **Solution 2 (Interceptor-Based)**.
 
 Both solutions properly handle `includeOnly` and `excludeOnly` dynamically. 🚀 Let me know if you need further refinements!
+
+
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
+import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
+@Component
+public class FilterInterceptor implements HandlerInterceptor {
+
+    private final ObjectMapper objectMapper;
+
+    public FilterInterceptor(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
+
+        Set<String> includeFields = (includeOnly != null) ? new HashSet<>(Arrays.asList(includeOnly.split(","))) : null;
+        Set<String> excludeFields = (excludeOnly != null) ? new HashSet<>(Arrays.asList(excludeOnly.split(","))) : null;
+
+        // Apply filtering to response body
+        response.setCharacterEncoding("UTF-8");
+
+        // Example data (replace with your actual data)
+        AccountDetailsResponse accountDetails = new AccountDetailsResponse();
+        accountDetails.setAccountId("123456");
+        accountDetails.setAccountName("John Doe");
+        accountDetails.setAccountNumber("9876543210");
+        accountDetails.setAccountSortCode("001122");
+        accountDetails.setStatus("active");
+
+        SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+        if (includeFields != null) {
+            filterProvider.addFilter("dynamicFilter", SimpleBeanPropertyFilter.filterOutAllExcept(includeFields));
+        } else if (excludeFields != null) {
+            filterProvider.addFilter("dynamicFilter", SimpleBeanPropertyFilter.serializeAllExcept(excludeFields));
+        } else {
+            filterProvider.addFilter("dynamicFilter", SimpleBeanPropertyFilter.serializeAll());
+        }
+
+        // Apply filtering and write the response
+        response.setContentType("application/json");
+        objectMapper.setFilterProvider(filterProvider);
+        objectMapper.writeValue(response.getWriter(), accountDetails);
+
+        return false; // Return false to prevent further processing since we've already handled the response
+    }
+}
+
