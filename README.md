@@ -1,136 +1,115 @@
-## **Confluence Page: Implementing Dynamic Filtering for Account Service API**
+Here are the **two complete solutions** for implementing filtering in a Spring Boot application:  
 
-### **Background**
-The Account service API provides detailed information about an account, including key attributes such as the **account balance**, **deposits**, **interest**, **withdrawals**, and other account-related data. 
+1. **Using `OncePerRequestFilter` (Filter-Based Approach)**
+2. **Using `HandlerInterceptor` (Interceptor-Based Approach)**  
 
-To optimize performance, reduce payload sizes, and improve client-server communication efficiency, we want to enable filtering functionality in our API. This will allow consumers to **include or exclude** specific fields dynamically. For example, consumers may only want the **account details** without the associated **deposits**, **interest**, and **withdrawals**.
-
----
-
-### **Why We Should Implement This Feature**
-Implementing dynamic field selection allows us to achieve several key benefits:
-
-- **Reduced Payload Size**: Only relevant data is returned, reducing the amount of data transferred.
-- **Improved Performance**: Smaller responses result in faster response times for API calls.
-- **Minimized Bandwidth Usage**: Sending only the necessary fields minimizes network usage.
-- **Simplified Processing**: Both client-side and server-side logic is simplified as consumers only receive the necessary data.
+Both approaches support `includeOnly` and `excludeOnly` parameters for filtering response data.
 
 ---
 
-### **Scope of the Spike**
-The goal is to investigate potential approaches for implementing **dynamic filtering** in the **Account service API** to return only the selected fields based on **query parameters** or **header parameters**.
+## ✅ **Solution 1: Using `OncePerRequestFilter` (Filter-Based)**
+This approach wraps the response, applies filtering, and modifies the response **before sending it to the client**.
 
----
-
-### **Use Case Examples**
-1. **Excluding Specific Fields**: 
-   - A consumer wants to exclude the **interest**, **deposits**, and **withdrawals** from the response.
-   - **API Request**:  
-     ```
-     GET /accounts/{accountNumber}?excludeOnly=interest,deposits,withdrawals
-     ```
-
-2. **Including Specific Fields**:
-   - A consumer only wants specific fields such as **accountName**, **product**, and **maturityDate**.
-   - **API Request**:
-     ```
-     GET /accounts/{accountNumber}?includeOnly=accountName,product,maturityDate
-     ```
-
----
-
-### **Approaches to Implement Dynamic Filtering**
-Several methods can be used to implement dynamic filtering in Spring Boot. Below are some potential options:
-
----
-
-### **Option 1: Jackson `@JsonFilter` (Dynamic Filtering)**
-One common approach is to use **Jackson's `@JsonFilter`** annotation, which allows for dynamic filtering at runtime.
-
-#### **How It Works**:
-- The `@JsonFilter` annotation is used to create a **dynamic filter** on specific fields or objects.
-- The controller will read query parameters (such as `includeOnly` or `excludeOnly`), apply the filter, and return the data.
-
-#### **Implementation**:
-
-##### **Step 1: Annotate DTOs with `@JsonFilter`**
-Ensure both **parent and nested DTO classes** are annotated with `@JsonFilter`:
-
+### **1️⃣ `FilterInterceptor.java` (Filter-Based)**
 ```java
-import com.fasterxml.jackson.annotation.JsonFilter;
-import lombok.Getter;
-import lombok.Setter;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.converter.json.MappingJacksonValue;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ContentCachingResponseWrapper;
 
-@Getter
-@Setter
-@JsonFilter("dynamicFilter")  // Apply dynamic filtering
-public class AccountDetails {
-    private String accountId;
-    private String accountName;
-    private String accountNumber;
-    private String accountSortCode;
-    private String product;
-    private List<Deposit> deposits;
-    private List<Withdrawal> withdrawals;
-    private String interestRate;
-    private String balance;
-    private String openedDate;
+import javax.servlet.FilterChain;
+import javax.servlet.ServletException;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
+@Component
+public class FilterInterceptor extends OncePerRequestFilter {
+
+    private final ObjectMapper objectMapper;
+
+    public FilterInterceptor(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+
+        ContentCachingResponseWrapper responseWrapper = new ContentCachingResponseWrapper(response);
+
+        try {
+            filterChain.doFilter(request, responseWrapper);
+
+            byte[] responseBody = responseWrapper.getContentAsByteArray();
+            if (responseBody.length > 0) {
+                // Read the response body and apply filtering
+                Object originalResponse = objectMapper.readValue(responseBody, Object.class);
+                MappingJacksonValue filteredResponse = FilteringUtil.applyFiltering(request, originalResponse);
+
+                // Reset response and write filtered content
+                responseWrapper.resetBuffer();
+                responseWrapper.setContentType("application/json");
+                ServletOutputStream outputStream = responseWrapper.getOutputStream();
+                objectMapper.writeValue(outputStream, filteredResponse.getValue());
+
+                responseWrapper.copyBodyToResponse();
+            }
+        } catch (Exception e) {
+            responseWrapper.copyBodyToResponse();
+            throw e;
+        }
+    }
 }
 ```
 
-##### **Step 2: Controller Logic to Apply Filters**
-The controller should handle the dynamic filtering based on request parameters such as `includeOnly` or `excludeOnly`.
+### **2️⃣ `WebConfig.java` (Registering Filter)**
+```java
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
+@Configuration
+public class WebConfig {
+
+    @Bean
+    public FilterRegistrationBean<FilterInterceptor> filterRegistrationBean(FilterInterceptor filterInterceptor) {
+        FilterRegistrationBean<FilterInterceptor> registrationBean = new FilterRegistrationBean<>();
+        registrationBean.setFilter(filterInterceptor);
+        registrationBean.addUrlPatterns("/accounts/*");  // Apply filter only for account endpoints
+        return registrationBean;
+    }
+}
+```
+
+### **3️⃣ `FilteringUtil.java` (Applying Filters)**
 ```java
 import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
 import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
-import com.fasterxml.jackson.databind.ser.FilterProvider;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.http.converter.json.MappingJacksonValue;
-import org.springframework.web.bind.annotation.*;
+import com.fasterxml.jackson.http.converter.json.MappingJacksonValue;
 
-import java.util.*;
+import javax.servlet.http.HttpServletRequest;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
-@RestController
-@RequestMapping("/accounts")
-public class AccountController {
+public class FilteringUtil {
 
-    @GetMapping("/{accountNumber}")
-    public MappingJacksonValue getAccount(
-            @PathVariable String accountNumber,
-            @RequestParam(value = "includeOnly", required = false) String includeOnly,
-            @RequestParam(value = "excludeOnly", required = false) String excludeOnly) {
+    public static MappingJacksonValue applyFiltering(HttpServletRequest request, Object responseData) {
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
 
-        // Sample data for response
-        AccountDetails account = new AccountDetails();
-        account.setAccountId("123456");
-        account.setAccountName("John Doe");
-        account.setAccountNumber(accountNumber);
-        account.setProduct("Savings");
-        account.setBalance("10000.00");
-
-        // Apply dynamic filtering
-        MappingJacksonValue mapping = applyFiltering(account, includeOnly, excludeOnly);
-        return mapping;
-    }
-
-    private MappingJacksonValue applyFiltering(Object responseData, String includeOnly, String excludeOnly) {
         SimpleFilterProvider filterProvider = new SimpleFilterProvider();
 
-        // Convert comma-separated values to a Set
-        Set<String> includeFields = (includeOnly != null && !includeOnly.isEmpty()) ?
-                new HashSet<>(Arrays.asList(includeOnly.split(","))) : null;
+        Set<String> includeFields = includeOnly != null ? new HashSet<>(Arrays.asList(includeOnly.split(","))) : null;
+        Set<String> excludeFields = excludeOnly != null ? new HashSet<>(Arrays.asList(excludeOnly.split(","))) : null;
 
-        Set<String> excludeFields = (excludeOnly != null && !excludeOnly.isEmpty()) ?
-                new HashSet<>(Arrays.asList(excludeOnly.split(","))) : null;
-
-        // Apply Include-Only or Exclude-Only Filtering
         if (includeFields != null) {
-            filterProvider.addFilter("dynamicFilter",
-                    SimpleBeanPropertyFilter.filterOutAllExcept(includeFields));
+            filterProvider.addFilter("dynamicFilter", SimpleBeanPropertyFilter.filterOutAllExcept(includeFields));
         } else if (excludeFields != null) {
-            filterProvider.addFilter("dynamicFilter",
-                    SimpleBeanPropertyFilter.serializeAllExcept(excludeFields));
+            filterProvider.addFilter("dynamicFilter", SimpleBeanPropertyFilter.serializeAllExcept(excludeFields));
         } else {
             filterProvider.addFilter("dynamicFilter", SimpleBeanPropertyFilter.serializeAll());
         }
@@ -142,75 +121,115 @@ public class AccountController {
 }
 ```
 
-##### **Step 3: Test the API**
-1. **GET** `/accounts/{accountNumber}?excludeOnly=interest,deposits,withdrawals`
-   - **Response**: Excludes interest, deposits, and withdrawals fields, and returns the rest of the account details.
-
-2. **GET** `/accounts/{accountNumber}?includeOnly=accountName,product,maturityDate`
-   - **Response**: Only includes the account name, product, and maturity date.
-
 ---
 
-### **Option 2: Using Libraries Like **Squiggly**
-Squiggly is a third-party library that provides **dynamic filtering** of JSON objects based on query parameters. It is an easier-to-implement solution compared to custom filtering.
+## ✅ **Solution 2: Using `HandlerInterceptor` (Interceptor-Based)**
+This approach intercepts controller responses and **modifies the response before returning it to the client**.
 
-#### **How It Works**:
-- Squiggly parses request parameters and filters out fields accordingly.
-- It allows you to specify query parameters in the format `includeOnly=field1,field2` or `excludeOnly=field1,field2` directly in the URL.
-
-#### **Implementation**:
-1. Add Squiggly dependency to your `pom.xml`:
-
-```xml
-<dependency>
-    <groupId>org.squiggly</groupId>
-    <artifactId>squiggly-annotations</artifactId>
-    <version>1.3.2</version>
-</dependency>
-```
-
-2. Configure **Squiggly** in your Spring Boot app:
-
+### **1️⃣ `FilterInterceptor.java` (Interceptor-Based)**
 ```java
-@Configuration
-public class SquigglyConfig extends ObjectMapperConfigurer {
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.converter.json.MappingJacksonValue;
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+@Component
+public class FilterInterceptor implements HandlerInterceptor {
+
+    private final ObjectMapper objectMapper;
+
+    public FilterInterceptor(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
     @Override
-    public void configure(ObjectMapper objectMapper) {
-        objectMapper.registerModule(new SquigglyModule());
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        return true;  // Continue request processing
+    }
+
+    @Override
+    public void postHandle(HttpServletRequest request, HttpServletResponse response, Object handler, org.springframework.web.servlet.ModelAndView modelAndView) throws Exception {
+        Object originalResponse = request.getAttribute("filteredResponse");
+        if (originalResponse != null) {
+            MappingJacksonValue filteredResponse = FilteringUtil.applyFiltering(request, originalResponse);
+            response.setContentType("application/json");
+            objectMapper.writeValue(response.getWriter(), filteredResponse.getValue());
+        }
     }
 }
 ```
 
-3. Use the `@JsonSquiggly` annotation in your DTOs to define which fields can be filtered dynamically:
-
+### **2️⃣ `WebConfig.java` (Registering Interceptor)**
 ```java
-@JsonSquiggly
-public class AccountDetails {
-    private String accountId;
-    private String accountName;
-    private String accountNumber;
-    private String balance;
-    private String deposits;
-    private String withdrawals;
-    private String interestRate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+
+    @Autowired
+    private FilterInterceptor filterInterceptor;
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(filterInterceptor);
+    }
+}
+```
+
+### **3️⃣ `AccountController.java` (Using the Interceptor)**
+```java
+import org.springframework.http.converter.json.MappingJacksonValue;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/accounts")
+public class AccountController {
+
+    private final ObjectMapper objectMapper;
+
+    public AccountController(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @GetMapping("/{accountId}")
+    public MappingJacksonValue getAccount(
+            @PathVariable String accountId,
+            @RequestParam(value = "includeOnly", required = false) String includeOnly,
+            @RequestParam(value = "excludeOnly", required = false) String excludeOnly,
+            HttpServletRequest request) {
+
+        AccountDetails account = new AccountDetails("123456", "John Doe", "9876543210", "001122");
+        AccountDetailsResponse response = new AccountDetailsResponse(account);
+
+        MappingJacksonValue filteredResponse = FilteringUtil.applyFiltering(request, response);
+        request.setAttribute("filteredResponse", filteredResponse);
+
+        return filteredResponse;  // The interceptor will modify this before sending the response
+    }
 }
 ```
 
 ---
 
-### **Recommendation for the Proposed Approach**
-
-Based on the complexity and flexibility required for dynamic filtering, we recommend the **Jackson `@JsonFilter`** approach for the following reasons:
-
-- **Flexibility**: It allows for easy integration into existing Spring Boot applications with minimal configuration.
-- **Dynamic Filtering**: Filters can be dynamically applied based on `includeOnly` or `excludeOnly` parameters, without hardcoding field names.
-- **No Additional Dependencies**: Unlike libraries like **Squiggly**, **Jackson** comes out-of-the-box with Spring Boot and doesn’t require third-party dependencies.
-
-However, if you’re looking for an even simpler solution and **less customization** is required, the **Squiggly library** can provide a more concise implementation with automatic query parameter parsing.
+## **📌 Key Differences**
+| Feature | **Filter-Based (Solution 1)** | **Interceptor-Based (Solution 2)** |
+|---------|------------------------------|----------------------------------|
+| **Processing Level** | Low-level (modifies HTTP response directly) | High-level (intercepts after controller processing) |
+| **Best For** | Global response filtering | Controller-specific response filtering |
+| **Customization** | Works for all responses | Works for API responses only |
+| **Performance** | Slightly more overhead due to response caching | Lighter weight (directly modifies controller output) |
+| **Complexity** | More complex due to `ContentCachingResponseWrapper` | Easier to implement |
 
 ---
 
-### **Conclusion**
-- **Jackson Filters** allow for **dynamic filtering** of both **top-level** and **nested** fields, ensuring we can apply `includeOnly` or `excludeOnly` query parameters.
-- This approach can significantly reduce payload size, minimize bandwidth, and improve the performance of the Account service API.
-  
+## **✅ Final Recommendation**
+- If you **want a global filter** that applies to all responses, use **Solution 1 (Filter-Based)**.
+- If you **only need to filter controller responses**, use **Solution 2 (Interceptor-Based)**.
+
+Both solutions properly handle `includeOnly` and `excludeOnly` dynamically. 🚀 Let me know if you need further refinements!
