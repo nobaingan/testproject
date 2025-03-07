@@ -1,72 +1,250 @@
-import java.lang.reflect.Constructor;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.Collections;
+# **Dynamic Filtering in Spring Boot - Design Decision Document**  
 
-public class AccountController {
+## **Overview**  
+APIs often need to return different fields based on client needs. Instead of creating multiple endpoints, dynamic filtering allows API consumers to specify which fields they want to include or exclude.  
 
-    // Recursive filtering function
-    private Object filterFields(Object responseObject, Set<String> includeFields, Set<String> excludeFields) {
-        if (responseObject == null) {
-            return null;
-        }
+This document explains five approaches for implementing dynamic filtering in Spring Boot, provides sample implementations, and includes a **detailed comparison table** to help decide the best approach.  
 
-        // Create a new instance of the class to hold the filtered response
-        Object filteredObject = null;
-        try {
-            filteredObject = createNewInstance(responseObject.getClass());
+---
 
-            // Get all fields of the current object
-            for (var field : responseObject.getClass().getDeclaredFields()) {
-                field.setAccessible(true);
-                try {
-                    Object fieldValue = field.get(responseObject);
+## **Why Dynamic Filtering?**  
+### **Use Case Examples**  
+1. **Excluding Specific Fields**:  
+   - A consumer does **not** want `interest`, `deposits`, and `withdrawals` in the response.  
+   - **API Request:**  
+     ```
+     GET /accounts/12345?excludeOnly=interest,deposits,withdrawals
+     ```
+   - **Response:**  
+     ```json
+     {
+         "accountNumber": "12345",
+         "accountName": "John's Savings",
+         "product": "Fixed Deposit",
+         "maturityDate": "2025-12-31"
+     }
+     ```
 
-                    // If it's a nested object, apply recursive filtering
-                    if (fieldValue != null && !field.getType().isPrimitive() && !field.getType().equals(String.class)) {
-                        // Recursively filter nested objects
-                        field.set(filteredObject, filterFields(fieldValue, includeFields, excludeFields));
-                    } else {
-                        // Apply include/exclude logic based on the field name
-                        if ((includeFields.isEmpty() || includeFields.contains(field.getName())) &&
-                            (excludeFields.isEmpty() || !excludeFields.contains(field.getName()))) {
-                            field.set(filteredObject, fieldValue);
-                        }
-                    }
-                } catch (IllegalAccessException e) {
-                    e.printStackTrace();
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return filteredObject;
-    }
+2. **Including Specific Fields**:  
+   - A consumer only wants `accountName`, `product`, and `maturityDate`.  
+   - **API Request:**  
+     ```
+     GET /accounts/12345?includeOnly=accountName,product,maturityDate
+     ```
+   - **Response:**  
+     ```json
+     {
+         "accountName": "John's Savings",
+         "product": "Fixed Deposit",
+         "maturityDate": "2025-12-31"
+     }
+     ```
 
-    private Object createNewInstance(Class<?> clazz) throws Exception {
-        // Only create a new instance if it's not an abstract class or interface
-        if (clazz.isInterface() || java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) {
-            throw new IllegalArgumentException("Cannot create an instance of an interface or abstract class.");
-        }
+---
 
-        try {
-            // Attempt to use a no-argument constructor
-            Constructor<?> constructor = clazz.getDeclaredConstructor();
-            return constructor.newInstance();
-        } catch (NoSuchMethodException e) {
-            // Handle the case where the no-argument constructor doesn't exist
-            // Try finding a constructor that accepts parameters
-            Constructor<?> constructorWithParams = clazz.getDeclaredConstructor(String.class, String.class);
-            return constructorWithParams.newInstance("defaultAccountId", "defaultAccountName");
-        }
-    }
+## **Approaches for Dynamic Filtering**  
 
-    private Set<String> parseFields(String fields) {
-        if (fields != null && !fields.isEmpty()) {
-            return new HashSet<>(fields.split(","));
-        }
-        return Collections.emptySet();
-    }
+### **1. Jackson @JsonFilter (Dynamic Filtering)**
+- Uses **@JsonFilter** annotation and `MappingJacksonValue` for **runtime filtering**.
+- Works well when API consumers specify `includeOnly` or `excludeOnly` fields in query parameters.
 
-    // The controller method, as before
+#### **Implementation**  
+```java
+@JsonFilter("accountFilter")
+public class Account {
+    private String accountNumber;
+    private String accountName;
+    private String product;
+    private String maturityDate;
+    private double interest;
+    private double deposits;
+    private double withdrawals;
 }
+```
+
+```java
+@GetMapping("/{accountNumber}")
+public MappingJacksonValue getAccount(
+        @PathVariable String accountNumber,
+        @RequestParam(required = false) String includeOnly,
+        @RequestParam(required = false) String excludeOnly) {
+    
+    Account account = new Account();
+    Set<String> fieldsToInclude = includeOnly != null ? new HashSet<>(Arrays.asList(includeOnly.split(","))) : null;
+    Set<String> fieldsToExclude = excludeOnly != null ? new HashSet<>(Arrays.asList(excludeOnly.split(","))) : null;
+
+    SimpleBeanPropertyFilter filter = fieldsToInclude != null ? 
+        SimpleBeanPropertyFilter.filterOutAllExcept(fieldsToInclude) : 
+        SimpleBeanPropertyFilter.serializeAllExcept(fieldsToExclude);
+
+    FilterProvider filters = new SimpleFilterProvider().addFilter("accountFilter", filter);
+    MappingJacksonValue mapping = new MappingJacksonValue(account);
+    mapping.setFilters(filters);
+
+    return mapping;
+}
+```
+
+✅ **Pros:**  
+✔️ Works at **runtime**, flexible for API users.  
+✔️ Allows **both include and exclude** field options.  
+
+⚠️ **Cons:**  
+❌ Requires `MappingJacksonValue`, which is **not intuitive**.  
+❌ Can be **complex when managing multiple filters**.  
+
+---
+
+### **2. Jackson Mix-Ins**  
+- Allows defining filters **outside the model class** using a separate mix-in class.
+- Useful for **static filtering scenarios** (predefined fields to ignore).
+
+#### **Implementation**  
+```java
+@JsonIgnoreProperties({"interest", "deposits", "withdrawals"})
+public abstract class AccountMixin {}
+```
+
+```java
+@Bean
+public ObjectMapper objectMapper() {
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.addMixIn(Account.class, AccountMixin.class);
+    return objectMapper;
+}
+```
+
+✅ **Pros:**  
+✔️ Keeps filtering **separate** from the model.  
+✔️ Avoids modifying the original **Account class**.  
+
+⚠️ **Cons:**  
+❌ Cannot be changed at **runtime**.  
+❌ Requires configuring **ObjectMapper manually**.  
+
+---
+
+### **3. Jackson @JsonView**  
+- Uses predefined **views** to control which fields are included in different API responses.
+- Useful when **different user roles** need different views.
+
+#### **Implementation**  
+```java
+public class Views {
+    public static class Public {}
+    public static class Private extends Public {}
+}
+```
+
+```java
+public class Account {
+    @JsonView(Views.Public.class)
+    private String accountName;
+
+    @JsonView(Views.Private.class)
+    private String product;
+}
+```
+
+```java
+@GetMapping("/{accountNumber}")
+@JsonView(Views.Public.class)
+public Account getAccount(@PathVariable String accountNumber) {
+    return new Account();
+}
+```
+
+✅ **Pros:**  
+✔️ **Built-in Jackson feature**, no need for extra configuration.  
+✔️ Good for **predefined roles** (e.g., Admin sees more fields than Users).  
+
+⚠️ **Cons:**  
+❌ **No runtime flexibility**.  
+❌ Hard to manage when there are **too many views**.  
+
+---
+
+### **4. Squiggly Library**  
+- Allows filtering using **query parameters** like `fields=accountName,product`.
+- Works without modifying controllers or models.
+
+#### **Implementation**  
+```xml
+<dependency>
+    <groupId>com.github.bohnman</groupId>
+    <artifactId>squiggly-filter-jackson</artifactId>
+    <version>1.3.21</version>
+</dependency>
+```
+
+```java
+@Bean
+public ObjectMapper objectMapper() {
+    ObjectMapper objectMapper = new ObjectMapper();
+    Squiggly.init(objectMapper, new RequestSquigglyContextProvider());
+    return objectMapper;
+}
+```
+
+✅ **Pros:**  
+✔️ **Simple** to use, based on query parameters.  
+✔️ No need to modify **controller or model**.  
+
+⚠️ **Cons:**  
+❌ Requires an **external library**.  
+❌ May **impact performance** for complex queries.  
+
+---
+
+### **5. GraphQL**  
+- API consumers **request only the fields** they need, no filtering logic in backend.
+- Best for **modern APIs with evolving data needs**.
+
+#### **Implementation**  
+```graphql
+type Account {
+    accountNumber: String
+    accountName: String
+    product: String
+    maturityDate: String
+}
+
+type Query {
+    accounts: [Account]
+}
+```
+
+```java
+public class AccountResolver {
+    public List<Account> getAccounts() {
+        return List.of(new Account());
+    }
+}
+```
+
+✅ **Pros:**  
+✔️ **Maximum flexibility** (client decides fields).  
+✔️ **Efficient data fetching**, only requested fields are queried.  
+
+⚠️ **Cons:**  
+❌ Requires **GraphQL setup** and new **query language**.  
+❌ May not be ideal for **simple APIs**.  
+
+---
+
+## **Decision Making Table**  
+
+| Approach               | How It Works | Best For | Pros | Cons |
+|-----------------------|-------------|---------|------|------|
+| **Jackson @JsonFilter** | Uses `@JsonFilter` and `MappingJacksonValue` to include/exclude fields at runtime. | APIs needing **runtime filtering** via query params. | ✔️ Fully dynamic <br> ✔️ Supports both include & exclude | ❌ Needs `MappingJacksonValue` <br> ❌ More complex to set up |
+| **Jackson Mix-Ins** | Defines separate classes for filtering fields | **Static filtering** (predefined rules) | ✔️ Keeps model **clean** <br> ✔️ Easy to configure | ❌ **No runtime flexibility** <br> ❌ Requires `ObjectMapper` setup |
+| **Jackson @JsonView** | Uses `@JsonView` to define different field groups | **Role-based field visibility** | ✔️ **Built-in Jackson support** <br> ✔️ Good for user roles | ❌ **Not dynamic** <br> ❌ Becomes hard to manage |
+| **Squiggly Library** | Uses query params like `fields=field1,field2` | **Query-based filtering** | ✔️ **Simple and intuitive** <br> ✔️ No controller changes | ❌ Requires **external library** <br> ❌ Performance impact |
+| **GraphQL** | Clients request only the fields they need | **Modern APIs** with flexible data needs | ✔️ **Maximum flexibility** <br> ✔️ **Efficient data fetching** | ❌ **Requires GraphQL setup** <br> ❌ **Overkill for simple APIs** |
+
+### **Conclusion:**  
+- **For flexible filtering:** `@JsonFilter` or **Squiggly**.  
+- **For static rules:** **Mix-Ins** or `@JsonView`.  
+- **For modern APIs:** **GraphQL**.  
+
+Choosing the best approach depends on the API design and business needs.
