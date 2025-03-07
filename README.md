@@ -1,107 +1,72 @@
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.web.bind.annotation.*;
+import java.lang.reflect.Constructor;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Collections;
 
-import java.util.*;
-
-@RestController
-@RequestMapping("/accounts")
 public class AccountController {
 
-    private final ObjectMapper objectMapper;
-
-    public AccountController(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
-
-    @GetMapping("/{accountNumber}")
-    public MappingJacksonValue getAccountDetails(@PathVariable String accountNumber,
-                                                @RequestParam(value = "includeOnly", required = false) String includeOnly,
-                                                @RequestParam(value = "excludeOnly", required = false) String excludeOnly) throws Exception {
-
-        // Sample data - replace with actual account fetching logic
-        AccountDetailsResponse accountDetails = new AccountDetailsResponse();
-        accountDetails.setAccountId("123456");
-        accountDetails.setAccountName("John Doe");
-        accountDetails.setAccountNumber("9876543210");
-        accountDetails.setAccountSortCode("001122");
-        accountDetails.setStatus("active");
-
-        AccountDetails account = new AccountDetails();
-        account.setAccountId("123456");
-        account.setAccountName("John Doe");
-        accountDetails.setAccount(account);
-
-        // Determine the appropriate view based on include/exclude parameters
-        Set<String> includeFields = parseFields(includeOnly);
-        Set<String> excludeFields = parseFields(excludeOnly);
-
-        // Apply dynamic filtering and map to corresponding view
-        Object filteredResponse = applyDynamicView(accountDetails, includeFields, excludeFields);
-
-        // Convert filtered response to JSON
-        MappingJacksonValue mappingJacksonValue = new MappingJacksonValue(filteredResponse);
-        if (!includeFields.isEmpty()) {
-            mappingJacksonValue.setSerializationView(AccountView.Basic.class); // You can change this view based on your include/exclude logic
-        } else {
-            mappingJacksonValue.setSerializationView(AccountView.Extended.class); // Default view (can change as needed)
-        }
-
-        return mappingJacksonValue;
-    }
-
-    private Set<String> parseFields(String fields) {
-        if (fields != null && !fields.isEmpty()) {
-            return new HashSet<>(Arrays.asList(fields.split(",")));
-        }
-        return Collections.emptySet();
-    }
-
-    private Object applyDynamicView(Object responseObject, Set<String> includeFields, Set<String> excludeFields) {
-        if (responseObject == null) {
-            return null;
-        }
-
-        // Check if the object has fields that need filtering
-        return filterFields(responseObject, includeFields, excludeFields);
-    }
-
+    // Recursive filtering function
     private Object filterFields(Object responseObject, Set<String> includeFields, Set<String> excludeFields) {
         if (responseObject == null) {
             return null;
         }
 
         // Create a new instance of the class to hold the filtered response
-        Object filteredObject;
+        Object filteredObject = null;
         try {
-            filteredObject = responseObject.getClass().getDeclaredConstructor().newInstance();
-        } catch (Exception e) {
-            throw new RuntimeException("Error creating filtered object", e);
-        }
+            filteredObject = createNewInstance(responseObject.getClass());
 
-        // Get all fields of the current object
-        Field[] fields = responseObject.getClass().getDeclaredFields();
+            // Get all fields of the current object
+            for (var field : responseObject.getClass().getDeclaredFields()) {
+                field.setAccessible(true);
+                try {
+                    Object fieldValue = field.get(responseObject);
 
-        for (Field field : fields) {
-            field.setAccessible(true);
-            try {
-                Object fieldValue = field.get(responseObject);
-
-                // If it's a nested object, apply recursive filtering
-                if (fieldValue != null && !field.getType().isPrimitive()) {
-                    // Recursively filter nested objects
-                    field.set(filteredObject, filterFields(fieldValue, includeFields, excludeFields));
-                } else {
-                    // Apply include/exclude logic based on the field name
-                    if ((includeFields.isEmpty() || includeFields.contains(field.getName())) &&
-                        (excludeFields.isEmpty() || !excludeFields.contains(field.getName()))) {
-                        field.set(filteredObject, fieldValue);
+                    // If it's a nested object, apply recursive filtering
+                    if (fieldValue != null && !field.getType().isPrimitive() && !field.getType().equals(String.class)) {
+                        // Recursively filter nested objects
+                        field.set(filteredObject, filterFields(fieldValue, includeFields, excludeFields));
+                    } else {
+                        // Apply include/exclude logic based on the field name
+                        if ((includeFields.isEmpty() || includeFields.contains(field.getName())) &&
+                            (excludeFields.isEmpty() || !excludeFields.contains(field.getName()))) {
+                            field.set(filteredObject, fieldValue);
+                        }
                     }
+                } catch (IllegalAccessException e) {
+                    e.printStackTrace();
                 }
-            } catch (IllegalAccessException e) {
-                e.printStackTrace();
             }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-
         return filteredObject;
     }
+
+    private Object createNewInstance(Class<?> clazz) throws Exception {
+        // Only create a new instance if it's not an abstract class or interface
+        if (clazz.isInterface() || java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) {
+            throw new IllegalArgumentException("Cannot create an instance of an interface or abstract class.");
+        }
+
+        try {
+            // Attempt to use a no-argument constructor
+            Constructor<?> constructor = clazz.getDeclaredConstructor();
+            return constructor.newInstance();
+        } catch (NoSuchMethodException e) {
+            // Handle the case where the no-argument constructor doesn't exist
+            // Try finding a constructor that accepts parameters
+            Constructor<?> constructorWithParams = clazz.getDeclaredConstructor(String.class, String.class);
+            return constructorWithParams.newInstance("defaultAccountId", "defaultAccountName");
+        }
+    }
+
+    private Set<String> parseFields(String fields) {
+        if (fields != null && !fields.isEmpty()) {
+            return new HashSet<>(fields.split(","));
+        }
+        return Collections.emptySet();
+    }
+
+    // The controller method, as before
 }
