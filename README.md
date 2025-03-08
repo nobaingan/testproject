@@ -32,15 +32,21 @@ public class AccountController {
         Set<String> excludeFields = (excludeOnly != null) ? new HashSet<>(Arrays.asList(excludeOnly.split(","))) : null;
 
         // Apply filtering
-        filterJson(jsonNode, includeFields, excludeFields, "");
+        if (includeFields != null && !includeFields.isEmpty()) {
+            retainOnlyIncludedFields(jsonNode, includeFields, "");
+        }
+
+        if (excludeFields != null && !excludeFields.isEmpty()) {
+            removeExcludedFields(jsonNode, excludeFields, "");
+        }
 
         return jsonNode.toPrettyString();
     }
 
     /**
-     * Recursively filters JSON fields.
+     * Recursively removes all fields that are NOT in includeFields.
      */
-    private void filterJson(ObjectNode node, Set<String> includeFields, Set<String> excludeFields, String parentPath) {
+    private void retainOnlyIncludedFields(ObjectNode node, Set<String> includeFields, String parentPath) {
         Iterator<String> fieldNames = node.fieldNames();
         List<String> fieldsToRemove = new ArrayList<>();
 
@@ -49,23 +55,50 @@ public class AccountController {
             String fullPath = parentPath.isEmpty() ? field : parentPath + "." + field;
             JsonNode childNode = node.get(field);
 
-            // Recursively process nested objects
+            // If this field is NOT in includeFields, mark for removal
+            if (!matchesField(fullPath, includeFields)) {
+                fieldsToRemove.add(field);
+            }
+
+            // If it's an object, recursively process it
             if (childNode.isObject()) {
-                filterJson((ObjectNode) childNode, includeFields, excludeFields, fullPath);
-            }
+                retainOnlyIncludedFields((ObjectNode) childNode, includeFields, fullPath);
 
-            // Handle includeOnly: Remove fields not in the include list
-            if (includeFields != null && !includeFields.isEmpty() && !matchesField(fullPath, includeFields)) {
-                fieldsToRemove.add(field);
-            }
-
-            // Handle excludeOnly: Remove fields present in exclude list
-            if (excludeFields != null && matchesField(fullPath, excludeFields)) {
-                fieldsToRemove.add(field);
+                // Remove empty objects
+                if (childNode.isEmpty()) {
+                    fieldsToRemove.add(field);
+                }
             }
         }
 
-        // Remove collected fields
+        // Remove non-matching fields
+        fieldsToRemove.forEach(node::remove);
+    }
+
+    /**
+     * Recursively removes fields specified in excludeFields.
+     */
+    private void removeExcludedFields(ObjectNode node, Set<String> excludeFields, String parentPath) {
+        Iterator<String> fieldNames = node.fieldNames();
+        List<String> fieldsToRemove = new ArrayList<>();
+
+        while (fieldNames.hasNext()) {
+            String field = fieldNames.next();
+            String fullPath = parentPath.isEmpty() ? field : parentPath + "." + field;
+            JsonNode childNode = node.get(field);
+
+            // If this field is in excludeFields, mark for removal
+            if (matchesField(fullPath, excludeFields)) {
+                fieldsToRemove.add(field);
+            }
+
+            // If it's an object, recursively process it
+            if (childNode.isObject()) {
+                removeExcludedFields((ObjectNode) childNode, excludeFields, fullPath);
+            }
+        }
+
+        // Remove fields marked for exclusion
         fieldsToRemove.forEach(node::remove);
     }
 
