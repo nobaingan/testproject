@@ -248,3 +248,241 @@ public class AccountResolver {
 - **For modern APIs:** **GraphQL**.  
 
 Choosing the best approach depends on the API design and business needs.
+
+No, the current implementation using `ObjectNode.retain()` and `ObjectNode.remove()` works only for **top-level fields**. If `interest` and `withdrawals` are **nested objects**, the approach needs to be modified to handle **nested field filtering dynamically**.
+
+---
+
+## **Solution for Nested Fields Filtering in Jackson Mix-In**
+To support **nested fields** (e.g., `interest.rate`, `withdrawals.amount`), we need to:
+1. **Parse nested field names from `includeOnly` and `excludeOnly`**.
+2. **Recursively process the JSON structure** to apply filtering at any depth.
+
+---
+
+### **Step 1: Modify the `Account` Class**
+Make `interest` and `withdrawals` **nested objects** instead of simple fields.
+
+```java
+public class Account {
+    private String accountNumber;
+    private String accountName;
+    private String product;
+    private String maturityDate;
+    private Interest interest;        // Nested Object
+    private Transaction withdrawals;  // Nested Object
+    private Transaction deposits;     // Nested Object
+
+    // Constructor
+    public Account() {
+        this.accountNumber = "12345";
+        this.accountName = "John's Savings";
+        this.product = "Fixed Deposit";
+        this.maturityDate = "2025-12-31";
+        this.interest = new Interest(5.5);
+        this.withdrawals = new Transaction(2000);
+        this.deposits = new Transaction(10000);
+    }
+
+    // Getters and Setters
+}
+
+// Nested class for Interest
+class Interest {
+    private double rate;
+
+    public Interest(double rate) {
+        this.rate = rate;
+    }
+
+    public double getRate() {
+        return rate;
+    }
+}
+
+// Nested class for Transactions (Withdrawals/Deposits)
+class Transaction {
+    private double amount;
+
+    public Transaction(double amount) {
+        this.amount = amount;
+    }
+
+    public double getAmount() {
+        return amount;
+    }
+}
+```
+
+---
+
+### **Step 2: Modify the Controller to Handle Nested Fields**
+Instead of using `ObjectNode.retain()` and `ObjectNode.remove()`, we need **recursive field filtering**.
+
+```java
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.*;
+
+@RestController
+@RequestMapping("/accounts")
+public class AccountController {
+
+    private final ObjectMapper objectMapper;
+
+    public AccountController(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @GetMapping("/{accountNumber}")
+    public String getAccount(
+            @PathVariable String accountNumber,
+            @RequestParam(required = false) String includeOnly,
+            @RequestParam(required = false) String excludeOnly) throws Exception {
+
+        // Create an account instance
+        Account account = new Account();
+
+        // Convert object to JSON tree
+        ObjectNode jsonNode = objectMapper.valueToTree(account);
+
+        // Convert include/exclude parameters to sets
+        Set<String> includeFields = includeOnly != null ? new HashSet<>(Arrays.asList(includeOnly.split(","))) : null;
+        Set<String> excludeFields = excludeOnly != null ? new HashSet<>(Arrays.asList(excludeOnly.split(","))) : null;
+
+        // Apply filtering (recursive function)
+        filterJson(jsonNode, includeFields, excludeFields, "");
+
+        return jsonNode.toPrettyString();
+    }
+
+    /**
+     * Recursively filters JSON fields.
+     */
+    private void filterJson(ObjectNode node, Set<String> includeFields, Set<String> excludeFields, String parentPath) {
+        Iterator<String> fieldNames = node.fieldNames();
+        List<String> fieldsToRemove = new ArrayList<>();
+
+        while (fieldNames.hasNext()) {
+            String field = fieldNames.next();
+            String fullPath = parentPath.isEmpty() ? field : parentPath + "." + field;
+            JsonNode childNode = node.get(field);
+
+            // Recursively process nested objects
+            if (childNode.isObject()) {
+                filterJson((ObjectNode) childNode, includeFields, excludeFields, fullPath);
+            }
+
+            // Handle includeOnly: Remove fields not in include list
+            if (includeFields != null && !includeFields.isEmpty() && !matchesField(fullPath, includeFields)) {
+                fieldsToRemove.add(field);
+            }
+
+            // Handle excludeOnly: Remove fields present in exclude list
+            if (excludeFields != null && matchesField(fullPath, excludeFields)) {
+                fieldsToRemove.add(field);
+            }
+        }
+
+        // Remove collected fields
+        fieldsToRemove.forEach(node::remove);
+    }
+
+    /**
+     * Checks if a field or its parent exists in the include/exclude set.
+     */
+    private boolean matchesField(String field, Set<String> fieldSet) {
+        return fieldSet.contains(field) || fieldSet.stream().anyMatch(field::startsWith);
+    }
+}
+```
+
+---
+
+## **Step 3: Test Nested Field Filtering**
+
+### **1. Default Response (Full Account Data)**
+#### **Request:**
+```http
+GET /accounts/12345
+```
+#### **Response:**
+```json
+{
+  "accountNumber": "12345",
+  "accountName": "John's Savings",
+  "product": "Fixed Deposit",
+  "maturityDate": "2025-12-31",
+  "interest": {
+    "rate": 5.5
+  },
+  "withdrawals": {
+    "amount": 2000
+  },
+  "deposits": {
+    "amount": 10000
+  }
+}
+```
+
+---
+
+### **2. Exclude Only `interest.rate` and `withdrawals.amount`**
+#### **Request:**
+```http
+GET /accounts/12345?excludeOnly=interest.rate,withdrawals.amount
+```
+#### **Response:**
+```json
+{
+  "accountNumber": "12345",
+  "accountName": "John's Savings",
+  "product": "Fixed Deposit",
+  "maturityDate": "2025-12-31",
+  "interest": {},
+  "withdrawals": {},
+  "deposits": {
+    "amount": 10000
+  }
+}
+```
+(*Note: `interest` and `withdrawals` exist but are empty because only `rate` and `amount` were removed*)
+
+---
+
+### **3. Include Only `accountName`, `product`, and `interest.rate`**
+#### **Request:**
+```http
+GET /accounts/12345?includeOnly=accountName,product,interest.rate
+```
+#### **Response:**
+```json
+{
+  "accountName": "John's Savings",
+  "product": "Fixed Deposit",
+  "interest": {
+    "rate": 5.5
+  }
+}
+```
+
+---
+
+## **Final Summary**
+| Feature | Description |
+|---------|-------------|
+| **Approach** | Uses **Jackson Mix-In** + recursive JSON filtering for **nested objects**. |
+| **Include Only** | `?includeOnly=field1,field2.subfield` allows selecting **nested fields** dynamically. |
+| **Exclude Only** | `?excludeOnly=field1,field2.subfield` allows **hiding nested fields** dynamically. |
+| **Advantages** | - Works for **deeply nested objects**. <br> - Handles dynamic **inclusion & exclusion** in one API. <br> - Efficient and **extensible** for any model. |
+| **Limitations** | - Slight performance overhead for **deeply nested filtering**. <br> - Must ensure field paths **match the JSON structure** correctly. |
+
+---
+
+### **Conclusion**
+This updated solution **fully supports nested object filtering** using `includeOnly` and `excludeOnly`. It ensures flexibility in API responses, giving consumers control over the returned fields.
+
+Would you like **pagination, performance optimizations, or security considerations** added to this?
