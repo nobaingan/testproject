@@ -194,3 +194,33 @@ GET /person/123?excludeOnly=name.lastName,age,address.state,country.countryCode
 - Ensure proper **error handling** for cases where an invalid field is requested.  
 
 Let me know if you need further modifications! 🚀
+
+
+private static void extractNestedFields(Set<String> includeFields, Set<String> excludeFields, 
+                                       Class<?> clazz, String prefix, 
+                                       Map<String, Set<String>> filters, Set<Class<?>> visited) {
+    
+    // Prevent infinite loops by checking if class was already processed
+    if (visited.contains(clazz)) {
+        return;
+    }
+    visited.add(clazz);
+
+    String filterName = clazz.getSimpleName() + "Filter";
+    Set<String> relevantFields = new HashSet<>();
+
+    Arrays.stream(clazz.getDeclaredFields()).forEach(field -> {
+        String fullName = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
+
+        if (includeFields.contains(fullName) || includeFields.contains(field.getName())) {
+            relevantFields.add(field.getName());
+        }
+
+        // Prevent recursion on primitive types and known non-complex types
+        if (!field.getType().isPrimitive() && !field.getType().equals(String.class)) {
+            extractNestedFields(includeFields, excludeFields, field.getType(), fullName, filters, visited);
+        }
+    });
+
+    filters.put(filterName, relevantFields);
+}
