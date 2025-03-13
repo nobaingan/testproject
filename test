@@ -1,0 +1,32 @@
+public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
+    Map<String, Set<String>> filters = new HashMap<>();
+    Set<Class<?>> visited = new HashSet<>();
+
+    extractNestedFields(includeFields, excludeFields, rootClass, "", filters, visited);
+
+    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+    
+    // Check if includeOnly is applied at all
+    boolean hasIncludeOnly = !includeFields.isEmpty();
+
+    filters.forEach((filterName, fields) -> {
+        SimpleBeanPropertyFilter filter;
+
+        if (!fields.isEmpty()) {
+            // If includeOnly is specified, exclude all fields in other filters
+            if (hasIncludeOnly && !includeFields.containsAll(fields)) {
+                filter = SimpleBeanPropertyFilter.serializeAllExcept(); // Exclude all
+            } else {
+                filter = SimpleBeanPropertyFilter.filterOutAllExcept(fields);
+            }
+        } else if (!excludeFields.isEmpty()) {
+            filter = SimpleBeanPropertyFilter.serializeAllExcept(excludeFields);
+        } else {
+            filter = SimpleBeanPropertyFilter.serializeAllExcept(); // Default: Exclude everything
+        }
+
+        filterProvider.addFilter(filterName, filter);
+    });
+
+    return filterProvider;
+}
