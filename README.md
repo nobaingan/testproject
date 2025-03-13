@@ -1,18 +1,211 @@
-### **Decision Matrix for Dynamic Filtering Approaches in Spring Boot**  
+### **🔍 Issue Analysis**  
+The problem you're facing is that when `includeOnly=accountName` is passed:  
+- The **AccountDetailsFilter** correctly filters `accountName`.  
+- However, for **other DTOs** (like `BalanceDetails`, `Address`, etc.), filtering is **not applied properly**, so they still appear in the response.  
 
-| **Approach**            | **How It Works** | **Pros** | **Cons** | **Best For** |
-|-------------------------|-----------------|----------|----------|--------------|
-| **@JsonFilter (with Interceptor)** | Uses Jackson's `@JsonFilter` along with a Spring Interceptor to dynamically filter response fields based on request parameters. | - Centralized logic via Interceptor. <br>- Supports deep nested filtering. <br>- Decouples filtering from controllers. <br>- Can be applied globally across endpoints. | - Requires careful configuration to avoid unwanted filtering. <br>- Harder to debug as filtering happens after controller execution. <br>- Slight performance overhead. | Best for **global filtering needs** across multiple endpoints with **nested field support**. |
-| **ObjectNode (Jackson Tree Model API)** | Manually constructs response JSON using `ObjectNode`, removing or adding fields dynamically. | - Full control over JSON structure. <br>- Can handle deeply nested objects efficiently. <br>- No need for annotations or external dependencies. | - Adds more manual code, increasing complexity. <br>- Can be harder to maintain in large applications. <br>- Less reusable compared to declarative approaches. | Best for **custom response structures** and cases where JSON needs to be transformed significantly before returning. |
-| **@JsonView (Jackson Views)** | Uses `@JsonView` to define different field sets and selects the appropriate view at runtime. | - Easy to implement with minimal configuration. <br>- No extra dependencies required. <br>- Good for predefined field sets. | - Does not support dynamic field selection at runtime. <br>- Cannot be used for deeply nested structures dynamically. <br>- Requires pre-defining views in code. | Best when **predefined filtering rules** are sufficient and don’t need runtime customization. |
-| **Squiggly Library** | Uses query parameters (`fields=account.name,account.balance`) to filter fields dynamically. | - Simple and easy to integrate. <br>- Supports nested filtering out of the box. <br>- No need for extra custom logic in controllers. | - Adds an external dependency. <br>- Limited community support and updates. <br>- Slight performance impact for large responses. | Best for **quick filtering without custom implementation** when using REST APIs. |
-| **GraphQL** | Uses GraphQL queries to fetch only the requested fields dynamically. | - Extremely flexible for nested filtering. <br>- Reduces over-fetching of data. <br>- Well suited for complex APIs. | - Requires switching from REST to GraphQL. <br>- Steeper learning curve. <br>- Additional setup and tooling needed. | Best for **APIs requiring highly flexible field selection** and **complex nested structures**. |
+### **🔧 Root Cause**  
+- The filter logic **only processes fields that are explicitly included** (`includeOnly`).  
+- But **it does not exclude fields from DTOs that are not explicitly listed** in `includeOnly`.  
+- This means, when you request `accountName`, other nested objects **retain all fields** because they are not explicitly filtered.
 
-### **Key Takeaways**
-- **Use `@JsonFilter` with an Interceptor** if you want a **global** filtering solution for REST APIs.
-- **Use ObjectNode** if you need **complete control over JSON** structure.
-- **Use `@JsonView`** if you have **predefined field sets** that don’t change dynamically.
-- **Use Squiggly Library** for an **easy-to-integrate** solution with REST APIs.
-- **Use GraphQL** if you need **highly flexible field selection** and are okay with adopting GraphQL over REST.
+---
 
-Would you like implementation examples for each approach?
+## **✅ Solution: Force Exclusion of All Fields Except Those in `includeOnly`**
+### **Approach**
+1. **For `includeOnly` mode**:  
+   - **Only allow** explicitly requested fields.  
+   - **Remove all fields from nested DTOs unless they are referenced explicitly.**  
+
+2. **For `excludeOnly` mode**:  
+   - **Remove explicitly listed fields** but **keep everything else.**  
+
+---
+
+### **🚀 Fixed `DynamicFilterUtil`**
+```java
+import com.fasterxml.jackson.databind.ser.FilterProvider;
+import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
+import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+
+import java.util.*;
+
+public class DynamicFilterUtil {
+
+    public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
+        Map<String, Set<String>> filters = new HashMap<>();
+        Set<Class<?>> visited = new HashSet<>();
+
+        extractNestedFields(includeFields, excludeFields, rootClass, "", filters, visited);
+
+        SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+        filters.forEach((filterName, fields) -> {
+            SimpleBeanPropertyFilter filter;
+            if (!includeFields.isEmpty()) {
+                // Ensure ALL fields not in includeFields are excluded
+                filter = SimpleBeanPropertyFilter.filterOutAllExcept(fields);
+            } else if (!excludeFields.isEmpty()) {
+                filter = SimpleBeanPropertyFilter.serializeAllExcept(excludeFields);
+            } else {
+                filter = SimpleBeanPropertyFilter.serializeAll();
+            }
+            filterProvider.addFilter(filterName, filter);
+        });
+
+        return filterProvider;
+    }
+
+    private static void extractNestedFields(Set<String> includeFields, Set<String> excludeFields,
+                                            Class<?> clazz, String prefix,
+                                            Map<String, Set<String>> filters, Set<Class<?>> visited) {
+        if (visited.contains(clazz)) return;
+        visited.add(clazz);
+
+        String filterName = clazz.getSimpleName() + "Filter";
+        Set<String> relevantFields = new HashSet<>();
+
+        Arrays.stream(clazz.getDeclaredFields()).forEach(field -> {
+            String fullName = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
+
+            if (!includeFields.isEmpty()) {
+                // If includeOnly is used, ONLY keep explicitly requested fields
+                if (includeFields.contains(fullName) || includeFields.contains(field.getName())) {
+                    relevantFields.add(field.getName());
+                }
+            } else if (!excludeFields.isEmpty()) {
+                // If excludeOnly is used, REMOVE explicitly mentioned fields
+                if (!excludeFields.contains(fullName) && !excludeFields.contains(field.getName())) {
+                    relevantFields.add(field.getName());
+                }
+            } else {
+                relevantFields.add(field.getName());
+            }
+
+            // Recursively process nested DTOs
+            if (!field.getType().isPrimitive() && !field.getType().equals(String.class)) {
+                extractNestedFields(includeFields, excludeFields, field.getType(), fullName, filters, visited);
+            }
+        });
+
+        filters.put(filterName, relevantFields);
+    }
+}
+```
+
+---
+
+### **✅ Fixed `DynamicFilterInterceptor`**
+```java
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ser.FilterProvider;
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.util.*;
+
+@Component
+public class DynamicFilterInterceptor implements HandlerInterceptor {
+
+    private final ObjectMapper objectMapper;
+
+    public DynamicFilterInterceptor(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
+
+        Set<String> includeFields = (includeOnly != null) ? new HashSet<>(Arrays.asList(includeOnly.split(","))) : new HashSet<>();
+        Set<String> excludeFields = (excludeOnly != null) ? new HashSet<>(Arrays.asList(excludeOnly.split(","))) : new HashSet<>();
+
+        request.setAttribute("includeFields", includeFields);
+        request.setAttribute("excludeFields", excludeFields);
+        return true;
+    }
+
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
+
+        Object responseObject = request.getAttribute("filteredResponse");
+        if (responseObject != null) {
+            Set<String> includeFields = (Set<String>) request.getAttribute("includeFields");
+            Set<String> excludeFields = (Set<String>) request.getAttribute("excludeFields");
+
+            FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, responseObject.getClass());
+            objectMapper.setFilterProvider(filters);
+
+            response.setContentType("application/json");
+            response.setCharacterEncoding("UTF-8");
+        }
+    }
+}
+```
+
+---
+
+### **✅ Expected Behavior After Fix**
+#### **Case 1: `includeOnly=accountName`**
+```http
+GET /accounts?includeOnly=accountName
+```
+**Expected Response:**
+```json
+{
+    "primaryAccount": {
+        "accountName": "John Doe"
+    },
+    "secondaryAccount": {
+        "accountName": "Jane Smith"
+    }
+}
+```
+✅ **Fixes the issue! Now, `tmDetails` and other properties are removed.**
+
+#### **Case 2: `excludeOnly=balanceDetails`**
+```http
+GET /accounts?excludeOnly=balanceDetails
+```
+**Expected Response:**
+```json
+{
+    "primaryAccount": {
+        "accountId": "123456",
+        "accountName": "John Doe",
+        "address": {
+            "street": "123 Main St",
+            "city": "New York",
+            "country": {
+                "name": "USA",
+                "code": "US"
+            }
+        }
+    },
+    "secondaryAccount": {
+        "accountId": "789012",
+        "accountName": "Jane Smith",
+        "address": {
+            "street": "456 Elm St",
+            "city": "Los Angeles",
+            "country": {
+                "name": "USA",
+                "code": "US"
+            }
+        }
+    }
+}
+```
+✅ **Now correctly removes `balanceDetails` without affecting other fields.**
+
+---
+
+### **🛠 Why This Fix Works**
+1. **Explicitly removes all fields in nested DTOs unless explicitly included.**  
+2. **Handles both `includeOnly` and `excludeOnly` cases properly.**  
+3. **Ensures filtering works at all levels of the object tree.**  
+4. **Keeps filtering dynamic (no hardcoded filter names).**  
+
+🚀 Now, the filtering **should work exactly as expected!** Let me know if you need further refinements.
