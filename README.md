@@ -209,3 +209,33 @@ GET /accounts?excludeOnly=balanceDetails
 4. **Keeps filtering dynamic (no hardcoded filter names).**  
 
 🚀 Now, the filtering **should work exactly as expected!** Let me know if you need further refinements.
+
+public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
+    Map<String, Set<String>> filters = new HashMap<>();
+    Set<Class<?>> visited = new HashSet<>();
+
+    extractNestedFields(includeFields, excludeFields, rootClass, "", filters, visited);
+
+    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+    boolean hasIncludeOnly = !includeFields.isEmpty();
+
+    filters.forEach((filterName, fields) -> {
+        SimpleBeanPropertyFilter filter;
+
+        if (hasIncludeOnly) {
+            // If includeOnly is used but this DTO has no explicitly included fields, exclude all its properties
+            filter = fields.isEmpty()
+                ? SimpleBeanPropertyFilter.serializeAllExcept(new HashSet<>()) // Exclude all properties
+                : SimpleBeanPropertyFilter.filterOutAllExcept(fields);
+        } else if (!excludeFields.isEmpty()) {
+            filter = SimpleBeanPropertyFilter.serializeAllExcept(excludeFields);
+        } else {
+            filter = SimpleBeanPropertyFilter.serializeAllExcept(); // Default: Exclude everything
+        }
+
+        System.out.println("Applying Filter -> " + filterName + ": " + fields);
+        filterProvider.addFilter(filterName, filter);
+    });
+
+    return filterProvider;
+}
