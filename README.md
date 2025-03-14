@@ -111,3 +111,40 @@ private static Set<String> getAllFieldsDynamically(String filterName, Class<?> r
 ✅ **Removes entire objects if not explicitly requested**  
 
 Try it and let me know if this finally solves the issue! 🚀
+public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
+    Map<String, Set<String>> filters = new HashMap<>();
+    Set<Class<?>> visited = new HashSet<>();
+
+    // Extract nested fields dynamically
+    extractNestedFields(includeFields, excludeFields, rootClass, "", filters, visited);
+
+    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+
+    // If includeOnly is used, determine which filters should be empty
+    boolean isIncludeOnly = !includeFields.isEmpty();
+
+    filters.forEach((filterName, fields) -> {
+        SimpleBeanPropertyFilter filter;
+
+        if (isIncludeOnly) {
+            if (!fields.isEmpty()) {
+                // ✅ Include only explicitly requested fields
+                filter = SimpleBeanPropertyFilter.filterOutAllExcept(fields);
+            } else {
+                // ❌ If nothing was explicitly included, exclude everything
+                filter = SimpleBeanPropertyFilter.serializeAllExcept("*");
+            }
+        } else if (!excludeFields.isEmpty()) {
+            // ✅ Exclude only specified fields, keep the rest
+            filter = SimpleBeanPropertyFilter.serializeAllExcept(excludeFields);
+        } else {
+            // Default: No filtering (fallback case)
+            filter = SimpleBeanPropertyFilter.serializeAll();
+        }
+
+        filterProvider.addFilter(filterName, filter);
+    });
+
+    return filterProvider;
+}
+
