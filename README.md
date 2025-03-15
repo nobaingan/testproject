@@ -1,150 +1,92 @@
-### **🚀 Fully Dynamic Solution: Exclude All Fields When Not Explicitly Included**
-Since the filter names and fields **must be determined dynamically**, we need to extract all fields **at runtime** from the DTOs.
+package com.example.demo.util;
 
----
+import com.fasterxml.jackson.databind.ser.FilterProvider;
+import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
+import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
 
-## **🔹 Solution**
-1. **Find all fields dynamically** for a given DTO using **reflection**.
-2. **Ensure that if `includeOnly` applies to one filter, all other filters exclude all their fields.**
-3. **Automatically determine filter names** using `@JsonFilter` annotations on DTOs.
+import java.util.*;
 
----
+public class DynamicFilterUtil {
 
-### **🔄 Updated `createFilters` Method**
-```java
-public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
-    Map<String, Set<String>> filters = new HashMap<>();
-    Set<Class<?>> visited = new HashSet<>();
+    /**
+     * Creates a FilterProvider based on `includeOnly` and `excludeOnly` parameters.
+     *
+     * @param includeFields Fields to include explicitly (`includeOnly`).
+     * @param excludeFields Fields to exclude explicitly (`excludeOnly`).
+     * @param rootClass     The root class to process.
+     * @return A configured FilterProvider for dynamic filtering.
+     */
+    public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
+        Map<String, Set<String>> filters = new HashMap<>();
+        Set<Class<?>> visited = new HashSet<>();
 
-    // Extract nested fields dynamically
-    extractNestedFields(includeFields, excludeFields, rootClass, "", filters, visited);
+        // Process fields for both `includeOnly` and `excludeOnly`
+        processFields(includeFields, excludeFields, rootClass, "", filters, visited);
 
-    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+        // Create the filter provider
+        SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+        filters.forEach((className, fields) -> {
+            SimpleBeanPropertyFilter filter = fields.isEmpty()
+                    ? SimpleBeanPropertyFilter.filterOutAll() // Exclude objects with no relevant fields
+                    : SimpleBeanPropertyFilter.filterOutAllExcept(fields); // Include only specified fields
+            filterProvider.addFilter(className, filter);
+        });
 
-    // Get filters that have at least one explicitly included field
-    Set<String> explicitlyFiltered = filters.entrySet().stream()
-            .filter(entry -> !entry.getValue().isEmpty())
-            .map(Map.Entry::getKey)
-            .collect(Collectors.toSet());
-
-    // Apply filters dynamically
-    filters.forEach((filterName, fields) -> {
-        SimpleBeanPropertyFilter filter;
-
-        if (!fields.isEmpty()) {
-            // ✅ Include only explicitly requested fields
-            filter = SimpleBeanPropertyFilter.filterOutAllExcept(fields);
-        } else if (!explicitlyFiltered.isEmpty()) {
-            // ❌ If any filters have explicit fields, exclude everything in others
-            Set<String> allFields = getAllFieldsDynamically(filterName, rootClass);
-            filter = SimpleBeanPropertyFilter.serializeAllExcept(allFields);
-        } else {
-            // Default: No filtering (fallback case)
-            filter = SimpleBeanPropertyFilter.serializeAll();
-        }
-
-        filterProvider.addFilter(filterName, filter);
-    });
-
-    return filterProvider;
-}
-```
-
----
-
-### **🔍 Dynamic Method to Get All Fields in a DTO**
-```java
-private static Set<String> getAllFieldsDynamically(String filterName, Class<?> rootClass) {
-    Set<String> allFields = new HashSet<>();
-
-    // Find the DTO class with the correct @JsonFilter annotation
-    for (Field field : rootClass.getDeclaredFields()) {
-        if (field.isAnnotationPresent(JsonFilter.class)) {
-            JsonFilter jsonFilter = field.getAnnotation(JsonFilter.class);
-            if (jsonFilter.value().equals(filterName)) {
-                // Add all declared fields dynamically
-                for (Field subField : field.getType().getDeclaredFields()) {
-                    allFields.add(subField.getName());
-                }
-                break;
-            }
-        }
+        filterProvider.setFailOnUnknownId(false); // Allow classes without explicit filters
+        return filterProvider;
     }
 
-    return allFields;
-}
-```
-
----
-
-## **✅ How This Works**
-- **Dynamically detects filters** based on `@JsonFilter` annotations in DTOs.
-- **Extracts all fields of each DTO at runtime** via reflection.
-- **Ensures that only the requested fields are included** while everything else is excluded.
-
----
-
-### **🚀 Expected Behavior**
-#### **Request:** `includeOnly=accountName`
-**Before Fix (Incorrect Output)**  
-```json
-{
-    "account": { "accountName": "test" },
-    "tmDetails": { "proprietary": "XYZ", "masterAccountIdent": null },
-    "product": { "identifier": "123", "type": "Savings" }
-}
-```
-**After Fix (Correct Output)**  
-```json
-{
-    "account": { "accountName": "test" }
-}
-```
-✔️ `tmDetails` and `product` are **completely removed!**
-
----
-
-## **🚀 Final Fix Summary**
-✅ **Fully dynamic** – No hardcoded DTO field lists  
-✅ **Uses reflection** to get fields at runtime  
-✅ **Ensures only relevant filters allow data**  
-✅ **Removes entire objects if not explicitly requested**  
-
-Try it and let me know if this finally solves the issue! 🚀
-public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
-    Map<String, Set<String>> filters = new HashMap<>();
-    Set<Class<?>> visited = new HashSet<>();
-
-    // Extract nested fields dynamically
-    extractNestedFields(includeFields, excludeFields, rootClass, "", filters, visited);
-
-    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
-
-    // If includeOnly is used, determine which filters should be empty
-    boolean isIncludeOnly = !includeFields.isEmpty();
-
-    filters.forEach((filterName, fields) -> {
-        SimpleBeanPropertyFilter filter;
-
-        if (isIncludeOnly) {
-            if (!fields.isEmpty()) {
-                // ✅ Include only explicitly requested fields
-                filter = SimpleBeanPropertyFilter.filterOutAllExcept(fields);
-            } else {
-                // ❌ If nothing was explicitly included, exclude everything
-                filter = SimpleBeanPropertyFilter.serializeAllExcept("*");
-            }
-        } else if (!excludeFields.isEmpty()) {
-            // ✅ Exclude only specified fields, keep the rest
-            filter = SimpleBeanPropertyFilter.serializeAllExcept(excludeFields);
-        } else {
-            // Default: No filtering (fallback case)
-            filter = SimpleBeanPropertyFilter.serializeAll();
+    /**
+     * Processes fields dynamically for both `includeOnly` and `excludeOnly`.
+     */
+    private static void processFields(Set<String> includeFields, Set<String> excludeFields, Class<?> clazz,
+                                      String prefix, Map<String, Set<String>> filters, Set<Class<?>> visited) {
+        if (visited.contains(clazz)) {
+            return; // Prevent infinite recursion
         }
+        visited.add(clazz);
 
-        filterProvider.addFilter(filterName, filter);
-    });
+        String filterName = clazz.getSimpleName() + "Filter";
+        Set<String> relevantFields = new HashSet<>();
 
-    return filterProvider;
+        Arrays.stream(clazz.getDeclaredFields()).forEach(field -> {
+            String fullName = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
+
+            // Handle includeOnly: Add fields explicitly listed
+            if (includeFields.isEmpty() || includeFields.contains(fullName) || includeFields.contains(prefix)) {
+                relevantFields.add(field.getName());
+            }
+
+            // Handle excludeOnly: Remove fields explicitly listed
+            if (excludeFields.contains(fullName) || excludeFields.contains(field.getName())) {
+                relevantFields.remove(field.getName());
+            }
+
+            // Recursively process nested fields
+            if (!field.getType().isPrimitive() && !field.getType().equals(String.class)) {
+                processFields(includeFields, excludeFields, field.getType(), fullName, filters, visited);
+
+                // Retain parent objects if partially included or excluded
+                if (shouldRetainParent(includeFields, excludeFields, fullName)) {
+                    relevantFields.add(field.getName());
+                }
+            }
+        });
+
+        // Add the filter for this class
+        filters.put(filterName, relevantFields);
+    }
+
+    /**
+     * Determines if a parent object should be retained based on `includeOnly` or `excludeOnly`.
+     *
+     * @param includeFields The set of fields to include.
+     * @param excludeFields The set of fields to exclude.
+     * @param parentPath    The parent path of the nested object (e.g., "account").
+     * @return True if the parent object should be retained, false otherwise.
+     */
+    private static boolean shouldRetainParent(Set<String> includeFields, Set<String> excludeFields, String parentPath) {
+        return includeFields.stream().anyMatch(field -> field.startsWith(parentPath + ".")) ||
+                excludeFields.stream().anyMatch(field -> field.startsWith(parentPath + "."));
+    }
 }
-
