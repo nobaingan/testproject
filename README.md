@@ -110,3 +110,13 @@ private static void processFields(Set<String> includeFields, Set<String> exclude
     filters.put(filterName, relevantFields);
     logger.info("Filter for class {}: {}", clazz.getSimpleName(), relevantFields);
 }
+ String jsonPropertyName = getJsonPropertyName(field); // Get @JsonProperty name, if available
+        String fieldName = jsonPropertyName != null ? jsonPropertyName : field.getName(); // Fallback to field name
+        String fullName = prefix.isEmpty() ? fieldName : prefix + "." + fieldName;
+private static String getJsonPropertyName(Field field) {
+    if (field.isAnnotationPresent(com.fasterxml.jackson.annotation.JsonProperty.class)) {
+        return field.getAnnotation(com.fasterxml.jackson.annotation.JsonProperty.class).value();
+    }
+    return null; // Fallback to the field name
+}
+
