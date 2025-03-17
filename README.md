@@ -60,3 +60,27 @@ public class LoggingAspect {
 logging.level.root=INFO
 logging.level.com.example.demo=DEBUG
 logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} %-5level %logger{36} - %msg%n
+
+    /**
+     * Processes collections of nested objects dynamically.
+     */
+    private static void processCollectionFields(Set<String> includeFields, Set<String> excludeFields, Field field,
+                                                String fullName, Map<String, Set<String>> filters, Set<Class<?>> visited) {
+        // Get the generic type of the collection (e.g., Transaction)
+        Class<?> collectionElementType = getCollectionElementType(field);
+        if (collectionElementType != null) {
+            processFields(includeFields, excludeFields, collectionElementType, fullName, filters, visited);
+        }
+    }
+
+    /**
+     * Retrieves the element type of a collection field (e.g., List<Transaction> -> Transaction).
+     */
+    private static Class<?> getCollectionElementType(Field field) {
+        try {
+            return (Class<?>) ((java.lang.reflect.ParameterizedType) field.getGenericType()).getActualTypeArguments()[0];
+        } catch (Exception e) {
+            logger.warn("Unable to determine collection element type for field: {}", field.getName(), e);
+            return null;
+        }
+    }
