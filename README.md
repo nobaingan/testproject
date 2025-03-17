@@ -61,26 +61,52 @@ logging.level.root=INFO
 logging.level.com.example.demo=DEBUG
 logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} %-5level %logger{36} - %msg%n
 
-    /**
-     * Processes collections of nested objects dynamically.
-     */
-    private static void processCollectionFields(Set<String> includeFields, Set<String> excludeFields, Field field,
-                                                String fullName, Map<String, Set<String>> filters, Set<Class<?>> visited) {
-        // Get the generic type of the collection (e.g., Transaction)
-        Class<?> collectionElementType = getCollectionElementType(field);
-        if (collectionElementType != null) {
-            processFields(includeFields, excludeFields, collectionElementType, fullName, filters, visited);
+private static void processFields(Set<String> includeFields, Set<String> excludeFields, Class<?> clazz,
+                                  String prefix, Map<String, Set<String>> filters, Set<Class<?>> visited) {
+    if (visited.contains(clazz)) {
+        return; // Prevent infinite recursion
+    }
+    visited.add(clazz);
+
+    String filterName = clazz.getSimpleName() + "Filter";
+    Set<String> relevantFields = new HashSet<>();
+
+    logger.debug("Processing class: {}, Prefix: {}", clazz.getSimpleName(), prefix);
+
+    for (Field field : clazz.getDeclaredFields()) {
+        String fullName = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
+
+        // Include fields explicitly listed
+        if (includeFields.isEmpty() || includeFields.contains(fullName) || includeFields.contains(field.getName())) {
+            logger.debug("Including field: {}", fullName);
+            relevantFields.add(field.getName());
+        }
+
+        // Exclude explicitly listed fields
+        if (excludeFields.contains(fullName) || excludeFields.contains(field.getName())) {
+            logger.debug("Excluding field: {}", fullName);
+            relevantFields.remove(field.getName());
+        }
+
+        // Handle nested objects and collections
+        if (!field.getType().isPrimitive() && !field.getType().equals(String.class)) {
+            if (Collection.class.isAssignableFrom(field.getType())) {
+                // Handle collections (e.g., List<Transaction>)
+                if (includeFields.contains(fullName) || includeFields.contains(field.getName())) {
+                    logger.debug("Including collection field: {}", fullName);
+                    relevantFields.add(field.getName());
+                }
+                processCollectionFields(includeFields, excludeFields, field, fullName, filters, visited);
+            } else {
+                // Handle nested objects
+                processFields(includeFields, excludeFields, field.getType(), fullName, filters, visited);
+                if (shouldRetainParent(includeFields, excludeFields, fullName)) {
+                    relevantFields.add(field.getName());
+                }
+            }
         }
     }
 
-    /**
-     * Retrieves the element type of a collection field (e.g., List<Transaction> -> Transaction).
-     */
-    private static Class<?> getCollectionElementType(Field field) {
-        try {
-            return (Class<?>) ((java.lang.reflect.ParameterizedType) field.getGenericType()).getActualTypeArguments()[0];
-        } catch (Exception e) {
-            logger.warn("Unable to determine collection element type for field: {}", field.getName(), e);
-            return null;
-        }
-    }
+    filters.put(filterName, relevantFields);
+    logger.info("Filter for class {}: {}", clazz.getSimpleName(), relevantFields);
+}
