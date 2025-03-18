@@ -1,6 +1,7 @@
 package com.example.demo.util;
 
 import com.fasterxml.jackson.annotation.JsonFilter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ser.FilterProvider;
 import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
 import org.junit.jupiter.api.Test;
@@ -10,147 +11,118 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class DynamicFilterUtilTest {
 
-    // Sample DTO classes for testing
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     @JsonFilter("AccountDetailsFilter")
     public static class AccountDetails {
-        public String accountNumber;
-        public String accountType;
-        public List<Transaction> transactions;
-        public Meta meta;
+        public String accountNumber = "123456";
+        public String accountType = "Savings";
+        public List<Transaction> transactions = List.of(new Transaction());
+        public Meta meta = new Meta();
     }
 
     @JsonFilter("TransactionFilter")
     public static class Transaction {
-        public String transactionId;
-        public String transactionType;
-        public double amount;
+        public String transactionId = "txn123";
+        public String transactionType = "Credit";
+        public double amount = 1000.0;
     }
 
     @JsonFilter("MetaFilter")
     public static class Meta {
-        public int totalTransactions;
-        public String lastUpdated;
+        public int totalTransactions = 5;
+        public String lastUpdated = "2025-03-18";
     }
 
     @Test
-    public void testIncludeOnly_SingleField() {
+    public void testIncludeOnly_SingleField() throws Exception {
         Set<String> includeFields = Set.of("accountNumber");
         Set<String> excludeFields = Set.of();
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(
-                includeFields, excludeFields, AccountDetails.class);
+        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filters);
 
-        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
-        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
-                .includeAll());
-        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
-                .include("accountNumber"));
+        String result = objectMapper.writeValueAsString(new AccountDetails());
+        assertTrue(result.contains("accountNumber"));
+        assertFalse(result.contains("accountType"));
+        assertFalse(result.contains("transactions"));
+        assertFalse(result.contains("meta"));
     }
 
     @Test
-    public void testExcludeOnly_SingleField() {
+    public void testExcludeOnly_SingleField() throws Exception {
         Set<String> includeFields = Set.of();
         Set<String> excludeFields = Set.of("meta");
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(
-                includeFields, excludeFields, AccountDetails.class);
+        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filters);
 
-        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
-        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
-                .serializeAllExcept(Set.of("meta")));
+        String result = objectMapper.writeValueAsString(new AccountDetails());
+        assertTrue(result.contains("accountNumber"));
+        assertTrue(result.contains("accountType"));
+        assertTrue(result.contains("transactions"));
+        assertFalse(result.contains("meta"));
     }
 
     @Test
-    public void testIncludeNestedField() {
+    public void testIncludeNestedField() throws Exception {
         Set<String> includeFields = Set.of("transactions.transactionId");
         Set<String> excludeFields = Set.of();
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(
-                includeFields, excludeFields, AccountDetails.class);
+        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filters);
 
-        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
-        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
-                .include("transactionId"));
+        String result = objectMapper.writeValueAsString(new AccountDetails());
+        assertTrue(result.contains("transactions"));
+        assertTrue(result.contains("transactionId"));
+        assertFalse(result.contains("transactionType"));
+        assertFalse(result.contains("amount"));
     }
 
     @Test
-    public void testExcludeNestedField() {
+    public void testExcludeNestedField() throws Exception {
         Set<String> includeFields = Set.of();
         Set<String> excludeFields = Set.of("transactions.amount");
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(
-                includeFields, excludeFields, AccountDetails.class);
+        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filters);
 
-        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
-        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
-                .serializeAllExcept(Set.of("amount")));
+        String result = objectMapper.writeValueAsString(new AccountDetails());
+        assertTrue(result.contains("transactions"));
+        assertTrue(result.contains("transactionId"));
+        assertTrue(result.contains("transactionType"));
+        assertFalse(result.contains("amount"));
     }
 
     @Test
-    public void testIncludeCollectionElements() {
-        Set<String> includeFields = Set.of("transactions.transactionType");
-        Set<String> excludeFields = Set.of();
-
-        FilterProvider filters = DynamicFilterUtil.createFilters(
-                includeFields, excludeFields, AccountDetails.class);
-
-        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
-        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
-                .include("transactionType"));
-    }
-
-    @Test
-    public void testComplexIncludeAndExclude() {
+    public void testComplexIncludeAndExclude() throws Exception {
         Set<String> includeFields = Set.of("accountNumber", "transactions.transactionId");
         Set<String> excludeFields = Set.of("meta");
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(
-                includeFields, excludeFields, AccountDetails.class);
+        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filters);
 
-        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
-        
-        // AccountDetails Filter Assertions
-        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
-                .include("accountNumber"));
-        assertFalse(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
-                .include("meta"));
-
-        // Transaction Filter Assertions
-        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
-                .include("transactionId"));
-        assertFalse(filterProvider.findPropertyFilter("TransactionFilter", null)
-                .include("transactionType"));
+        String result = objectMapper.writeValueAsString(new AccountDetails());
+        assertTrue(result.contains("accountNumber"));
+        assertTrue(result.contains("transactions"));
+        assertTrue(result.contains("transactionId"));
+        assertFalse(result.contains("accountType"));
+        assertFalse(result.contains("amount"));
+        assertFalse(result.contains("meta"));
     }
 
     @Test
-    public void testEmptyIncludeAndExclude() {
+    public void testEmptyIncludeAndExclude() throws Exception {
         Set<String> includeFields = Set.of();
         Set<String> excludeFields = Set.of();
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(
-                includeFields, excludeFields, AccountDetails.class);
+        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filters);
 
-        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
-
-        // Should include all fields by default
-        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
-                .includeAll());
-        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
-                .includeAll());
-    }
-
-    @Test
-    public void testExcludeNonExistentField() {
-        Set<String> includeFields = Set.of();
-        Set<String> excludeFields = Set.of("nonExistentField");
-
-        FilterProvider filters = DynamicFilterUtil.createFilters(
-                includeFields, excludeFields, AccountDetails.class);
-
-        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
-        
-        // Should not affect filtering since field doesn’t exist
-        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
-                .includeAll());
+        String result = objectMapper.writeValueAsString(new AccountDetails());
+        assertTrue(result.contains("accountNumber"));
+        assertTrue(result.contains("accountType"));
+        assertTrue(result.contains("transactions"));
+        assertTrue(result.contains("meta"));
     }
 }
