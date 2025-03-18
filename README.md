@@ -1,122 +1,156 @@
-package com.example.demo.aspect;
+package com.example.demo.util;
 
-import org.aspectj.lang.JoinPoint;
-import org.aspectj.lang.annotation.AfterReturning;
-import org.aspectj.lang.annotation.AfterThrowing;
-import org.aspectj.lang.annotation.Around;
-import org.aspectj.lang.annotation.Aspect;
-import org.aspectj.lang.ProceedingJoinPoint;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
+import com.fasterxml.jackson.annotation.JsonFilter;
+import com.fasterxml.jackson.databind.ser.FilterProvider;
+import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+import org.junit.jupiter.api.Test;
+import java.util.*;
 
-@Aspect
-@Component
-public class LoggingAspect {
+import static org.junit.jupiter.api.Assertions.*;
 
-    private static final Logger logger = LoggerFactory.getLogger(LoggingAspect.class);
+public class DynamicFilterUtilTest {
 
-    // Log all method calls in the specified package
-    @Around("execution(* com.example.demo..*(..))")
-    public Object logMethodCall(ProceedingJoinPoint joinPoint) throws Throwable {
-        String methodName = joinPoint.getSignature().getName();
-        String className = joinPoint.getTarget().getClass().getSimpleName();
-
-        logger.info("Entering method: {}.{}", className, methodName);
-        logger.info("Arguments: {}", joinPoint.getArgs());
-
-        long startTime = System.currentTimeMillis();
-
-        try {
-            Object result = joinPoint.proceed(); // Proceed with the intercepted method
-            long elapsedTime = System.currentTimeMillis() - startTime;
-
-            logger.info("Exiting method: {}.{}; Execution time: {} ms", className, methodName, elapsedTime);
-            logger.info("Return Value: {}", result);
-
-            return result;
-        } catch (Exception ex) {
-            logger.error("Exception in method: {}.{}; Message: {}", className, methodName, ex.getMessage(), ex);
-            throw ex;
-        }
+    // Sample DTO classes for testing
+    @JsonFilter("AccountDetailsFilter")
+    public static class AccountDetails {
+        public String accountNumber;
+        public String accountType;
+        public List<Transaction> transactions;
+        public Meta meta;
     }
 
-    // Log after successful method execution
-    @AfterReturning(pointcut = "execution(* com.example.demo..*(..))", returning = "result")
-    public void logAfterReturning(JoinPoint joinPoint, Object result) {
-        String methodName = joinPoint.getSignature().getName();
-        logger.info("Method {} executed successfully. Returned: {}", methodName, result);
+    @JsonFilter("TransactionFilter")
+    public static class Transaction {
+        public String transactionId;
+        public String transactionType;
+        public double amount;
     }
 
-    // Log after exceptions are thrown
-    @AfterThrowing(pointcut = "execution(* com.example.demo..*(..))", throwing = "exception")
-    public void logAfterThrowing(JoinPoint joinPoint, Exception exception) {
-        String methodName = joinPoint.getSignature().getName();
-        logger.error("Exception thrown in method {}. Exception: {}", methodName, exception.getMessage());
+    @JsonFilter("MetaFilter")
+    public static class Meta {
+        public int totalTransactions;
+        public String lastUpdated;
+    }
+
+    @Test
+    public void testIncludeOnly_SingleField() {
+        Set<String> includeFields = Set.of("accountNumber");
+        Set<String> excludeFields = Set.of();
+
+        FilterProvider filters = DynamicFilterUtil.createFilters(
+                includeFields, excludeFields, AccountDetails.class);
+
+        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
+        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
+                .includeAll());
+        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
+                .include("accountNumber"));
+    }
+
+    @Test
+    public void testExcludeOnly_SingleField() {
+        Set<String> includeFields = Set.of();
+        Set<String> excludeFields = Set.of("meta");
+
+        FilterProvider filters = DynamicFilterUtil.createFilters(
+                includeFields, excludeFields, AccountDetails.class);
+
+        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
+        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
+                .serializeAllExcept(Set.of("meta")));
+    }
+
+    @Test
+    public void testIncludeNestedField() {
+        Set<String> includeFields = Set.of("transactions.transactionId");
+        Set<String> excludeFields = Set.of();
+
+        FilterProvider filters = DynamicFilterUtil.createFilters(
+                includeFields, excludeFields, AccountDetails.class);
+
+        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
+        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
+                .include("transactionId"));
+    }
+
+    @Test
+    public void testExcludeNestedField() {
+        Set<String> includeFields = Set.of();
+        Set<String> excludeFields = Set.of("transactions.amount");
+
+        FilterProvider filters = DynamicFilterUtil.createFilters(
+                includeFields, excludeFields, AccountDetails.class);
+
+        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
+        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
+                .serializeAllExcept(Set.of("amount")));
+    }
+
+    @Test
+    public void testIncludeCollectionElements() {
+        Set<String> includeFields = Set.of("transactions.transactionType");
+        Set<String> excludeFields = Set.of();
+
+        FilterProvider filters = DynamicFilterUtil.createFilters(
+                includeFields, excludeFields, AccountDetails.class);
+
+        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
+        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
+                .include("transactionType"));
+    }
+
+    @Test
+    public void testComplexIncludeAndExclude() {
+        Set<String> includeFields = Set.of("accountNumber", "transactions.transactionId");
+        Set<String> excludeFields = Set.of("meta");
+
+        FilterProvider filters = DynamicFilterUtil.createFilters(
+                includeFields, excludeFields, AccountDetails.class);
+
+        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
+        
+        // AccountDetails Filter Assertions
+        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
+                .include("accountNumber"));
+        assertFalse(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
+                .include("meta"));
+
+        // Transaction Filter Assertions
+        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
+                .include("transactionId"));
+        assertFalse(filterProvider.findPropertyFilter("TransactionFilter", null)
+                .include("transactionType"));
+    }
+
+    @Test
+    public void testEmptyIncludeAndExclude() {
+        Set<String> includeFields = Set.of();
+        Set<String> excludeFields = Set.of();
+
+        FilterProvider filters = DynamicFilterUtil.createFilters(
+                includeFields, excludeFields, AccountDetails.class);
+
+        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
+
+        // Should include all fields by default
+        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
+                .includeAll());
+        assertTrue(filterProvider.findPropertyFilter("TransactionFilter", null)
+                .includeAll());
+    }
+
+    @Test
+    public void testExcludeNonExistentField() {
+        Set<String> includeFields = Set.of();
+        Set<String> excludeFields = Set.of("nonExistentField");
+
+        FilterProvider filters = DynamicFilterUtil.createFilters(
+                includeFields, excludeFields, AccountDetails.class);
+
+        SimpleFilterProvider filterProvider = (SimpleFilterProvider) filters;
+        
+        // Should not affect filtering since field doesn’t exist
+        assertTrue(filterProvider.findPropertyFilter("AccountDetailsFilter", null)
+                .includeAll());
     }
 }
-
-	implementation 'org.springframework.boot:spring-boot-starter-aop'
-logging.level.root=INFO
-logging.level.com.example.demo=DEBUG
-logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} %-5level %logger{36} - %msg%n
-
-private static void processFields(Set<String> includeFields, Set<String> excludeFields, Class<?> clazz,
-                                  String prefix, Map<String, Set<String>> filters, Set<Class<?>> visited) {
-    if (visited.contains(clazz)) {
-        return; // Prevent infinite recursion
-    }
-    visited.add(clazz);
-
-    String filterName = clazz.getSimpleName() + "Filter";
-    Set<String> relevantFields = new HashSet<>();
-
-    logger.debug("Processing class: {}, Prefix: {}", clazz.getSimpleName(), prefix);
-
-    for (Field field : clazz.getDeclaredFields()) {
-        String fullName = prefix.isEmpty() ? field.getName() : prefix + "." + field.getName();
-
-        // Include fields explicitly listed
-        if (includeFields.isEmpty() || includeFields.contains(fullName) || includeFields.contains(field.getName())) {
-            logger.debug("Including field: {}", fullName);
-            relevantFields.add(field.getName());
-        }
-
-        // Exclude explicitly listed fields
-        if (excludeFields.contains(fullName) || excludeFields.contains(field.getName())) {
-            logger.debug("Excluding field: {}", fullName);
-            relevantFields.remove(field.getName());
-        }
-
-        // Handle nested objects and collections
-        if (!field.getType().isPrimitive() && !field.getType().equals(String.class)) {
-            if (Collection.class.isAssignableFrom(field.getType())) {
-                // Handle collections (e.g., List<Transaction>)
-                if (includeFields.contains(fullName) || includeFields.contains(field.getName())) {
-                    logger.debug("Including collection field: {}", fullName);
-                    relevantFields.add(field.getName());
-                }
-                processCollectionFields(includeFields, excludeFields, field, fullName, filters, visited);
-            } else {
-                // Handle nested objects
-                processFields(includeFields, excludeFields, field.getType(), fullName, filters, visited);
-                if (shouldRetainParent(includeFields, excludeFields, fullName)) {
-                    relevantFields.add(field.getName());
-                }
-            }
-        }
-    }
-
-    filters.put(filterName, relevantFields);
-    logger.info("Filter for class {}: {}", clazz.getSimpleName(), relevantFields);
-}
- String jsonPropertyName = getJsonPropertyName(field); // Get @JsonProperty name, if available
-        String fieldName = jsonPropertyName != null ? jsonPropertyName : field.getName(); // Fallback to field name
-        String fullName = prefix.isEmpty() ? fieldName : prefix + "." + fieldName;
-private static String getJsonPropertyName(Field field) {
-    if (field.isAnnotationPresent(com.fasterxml.jackson.annotation.JsonProperty.class)) {
-        return field.getAnnotation(com.fasterxml.jackson.annotation.JsonProperty.class).value();
-    }
-    return null; // Fallback to the field name
-}
-
