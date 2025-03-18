@@ -1,128 +1,137 @@
 package com.example.demo.util;
 
-import com.fasterxml.jackson.annotation.JsonFilter;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ser.FilterProvider;
 import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+import com.fasterxml.jackson.annotation.JsonFilter;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import org.junit.jupiter.api.Test;
-import java.util.*;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class DynamicFilterUtilTest {
+@SpringBootTest
+class DynamicFilterUtilTest {
 
+    private static final Logger logger = LoggerFactory.getLogger(DynamicFilterUtilTest.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Sample DTO with @JsonFilter annotation.
+     */
+    @Data
     @JsonFilter("AccountDetailsFilter")
-    public static class AccountDetails {
-        public String accountNumber = "123456";
-        public String accountType = "Savings";
-        public List<Transaction> transactions = List.of(new Transaction());
-        public Meta meta = new Meta();
+    @AllArgsConstructor
+    static class AccountDetails {
+        private String accountId;
+        private String accountType;
+        private double balance;
     }
 
-    @JsonFilter("TransactionFilter")
-    public static class Transaction {
-        public String transactionId = "txn123";
-        public String transactionType = "Credit";
-        public double amount = 1000.0;
-    }
-
-    @JsonFilter("MetaFilter")
-    public static class Meta {
-        public int totalTransactions = 5;
-        public String lastUpdated = "2025-03-18";
-    }
-
+    /**
+     * Test case: Include only 'accountId' field in JSON response.
+     */
     @Test
-    public void testIncludeOnly_SingleField() throws Exception {
-        Set<String> includeFields = Set.of("accountNumber");
-        Set<String> excludeFields = Set.of();
+    void testIncludeOnlySingleField() throws JsonProcessingException {
+        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filters);
+        Set<String> includeFields = new HashSet<>(Collections.singletonList("accountId"));
+        Set<String> excludeFields = Collections.emptySet();
 
-        String result = objectMapper.writeValueAsString(new AccountDetails());
-        assertTrue(result.contains("accountNumber"));
-        assertFalse(result.contains("accountType"));
-        assertFalse(result.contains("transactions"));
-        assertFalse(result.contains("meta"));
+        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filter);
+
+        String jsonResult = objectMapper.writeValueAsString(details);
+        logger.debug("Filtered JSON (Include accountId): {}", jsonResult);
+
+        assertTrue(jsonResult.contains("accountId"));
+        assertFalse(jsonResult.contains("accountType"));
+        assertFalse(jsonResult.contains("balance"));
     }
 
+    /**
+     * Test case: Exclude 'balance' field from JSON response.
+     */
     @Test
-    public void testExcludeOnly_SingleField() throws Exception {
-        Set<String> includeFields = Set.of();
-        Set<String> excludeFields = Set.of("meta");
+    void testExcludeSingleField() throws JsonProcessingException {
+        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filters);
+        Set<String> includeFields = Collections.emptySet();
+        Set<String> excludeFields = new HashSet<>(Collections.singletonList("balance"));
 
-        String result = objectMapper.writeValueAsString(new AccountDetails());
-        assertTrue(result.contains("accountNumber"));
-        assertTrue(result.contains("accountType"));
-        assertTrue(result.contains("transactions"));
-        assertFalse(result.contains("meta"));
+        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filter);
+
+        String jsonResult = objectMapper.writeValueAsString(details);
+        logger.debug("Filtered JSON (Exclude balance): {}", jsonResult);
+
+        assertTrue(jsonResult.contains("accountId"));
+        assertTrue(jsonResult.contains("accountType"));
+        assertFalse(jsonResult.contains("balance"));
     }
 
+    /**
+     * Test case: Include 'accountId' and 'balance', exclude 'accountType'.
+     */
     @Test
-    public void testIncludeNestedField() throws Exception {
-        Set<String> includeFields = Set.of("transactions.transactionId");
-        Set<String> excludeFields = Set.of();
+    void testIncludeAndExcludeFields() throws JsonProcessingException {
+        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filters);
+        Set<String> includeFields = new HashSet<>(Set.of("accountId", "balance"));
+        Set<String> excludeFields = new HashSet<>(Collections.singletonList("accountType"));
 
-        String result = objectMapper.writeValueAsString(new AccountDetails());
-        assertTrue(result.contains("transactions"));
-        assertTrue(result.contains("transactionId"));
-        assertFalse(result.contains("transactionType"));
-        assertFalse(result.contains("amount"));
+        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filter);
+
+        String jsonResult = objectMapper.writeValueAsString(details);
+        logger.debug("Filtered JSON (Include accountId, balance; Exclude accountType): {}", jsonResult);
+
+        assertTrue(jsonResult.contains("accountId"));
+        assertFalse(jsonResult.contains("accountType"));
+        assertTrue(jsonResult.contains("balance"));
     }
 
+    /**
+     * Test case: Include all fields when includeFields is empty.
+     */
     @Test
-    public void testExcludeNestedField() throws Exception {
-        Set<String> includeFields = Set.of();
-        Set<String> excludeFields = Set.of("transactions.amount");
+    void testIncludeAllFields() throws JsonProcessingException {
+        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filters);
+        Set<String> includeFields = Collections.emptySet();
+        Set<String> excludeFields = Collections.emptySet();
 
-        String result = objectMapper.writeValueAsString(new AccountDetails());
-        assertTrue(result.contains("transactions"));
-        assertTrue(result.contains("transactionId"));
-        assertTrue(result.contains("transactionType"));
-        assertFalse(result.contains("amount"));
+        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filter);
+
+        String jsonResult = objectMapper.writeValueAsString(details);
+        logger.debug("Filtered JSON (Include all fields): {}", jsonResult);
+
+        assertTrue(jsonResult.contains("accountId"));
+        assertTrue(jsonResult.contains("accountType"));
+        assertTrue(jsonResult.contains("balance"));
     }
 
+    /**
+     * Test case: Exclude all fields when all are in excludeFields.
+     */
     @Test
-    public void testComplexIncludeAndExclude() throws Exception {
-        Set<String> includeFields = Set.of("accountNumber", "transactions.transactionId");
-        Set<String> excludeFields = Set.of("meta");
+    void testExcludeAllFields() throws JsonProcessingException {
+        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
 
-        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filters);
+        Set<String> includeFields = Collections.emptySet();
+        Set<String> excludeFields = new HashSet<>(Set.of("accountId", "accountType", "balance"));
 
-        String result = objectMapper.writeValueAsString(new AccountDetails());
-        assertTrue(result.contains("accountNumber"));
-        assertTrue(result.contains("transactions"));
-        assertTrue(result.contains("transactionId"));
-        assertFalse(result.contains("accountType"));
-        assertFalse(result.contains("amount"));
-        assertFalse(result.contains("meta"));
-    }
+        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
+        objectMapper.setFilterProvider(filter);
 
-    @Test
-    public void testEmptyIncludeAndExclude() throws Exception {
-        Set<String> includeFields = Set.of();
-        Set<String> excludeFields = Set.of();
-
-        FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filters);
-
-        String result = objectMapper.writeValueAsString(new AccountDetails());
-        assertTrue(result.contains("accountNumber"));
-        assertTrue(result.contains("accountType"));
-        assertTrue(result.contains("transactions"));
-        assertTrue(result.contains("meta"));
-    }
-}
+        String jsonResult = objectMapper.writeValueAsString(details);
+        logger.debug("Filtered JSON (Exclude all fields): {}", jso
