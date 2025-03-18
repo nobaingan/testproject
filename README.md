@@ -134,4 +134,8 @@ class DynamicFilterUtilTest {
         objectMapper.setFilterProvider(filter);
 
         String jsonResult = objectMapper.writeValueAsString(details);
-        logger.debug("Filtered JSON (Exclude all fields): {}", jso
+        logger.debug("Filtered JSON (Exclude all fields): {}", jsonResult);
+
+        assertEquals("{}", jsonResult);
+    }
+}
