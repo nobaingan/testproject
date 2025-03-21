@@ -1,32 +1,422 @@
-public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
-    Map<String, Set<String>> filters = new HashMap<>();
-    Set<Class<?>> visited = new HashSet<>();
+package com.example.demo.util;
 
-    extractNestedFields(includeFields, excludeFields, rootClass, "", filters, visited);
+import com.fasterxml.jackson.annotation.JsonFilter;
+import com.fasterxml.jackson.databind.ser.FilterProvider;
+import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
+import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
-    
-    // Check if includeOnly is applied at all
-    boolean hasIncludeOnly = !includeFields.isEmpty();
+import java.lang.reflect.Field;
+import java.util.*;
 
-    filters.forEach((filterName, fields) -> {
-        SimpleBeanPropertyFilter filter;
+public class DynamicFilterUtil {
 
-        if (!fields.isEmpty()) {
-            // If includeOnly is specified, exclude all fields in other filters
-            if (hasIncludeOnly && !includeFields.containsAll(fields)) {
-                filter = SimpleBeanPropertyFilter.serializeAllExcept(); // Exclude all
-            } else {
-                filter = SimpleBeanPropertyFilter.filterOutAllExcept(fields);
-            }
-        } else if (!excludeFields.isEmpty()) {
-            filter = SimpleBeanPropertyFilter.serializeAllExcept(excludeFields);
-        } else {
-            filter = SimpleBeanPropertyFilter.serializeAllExcept(); // Default: Exclude everything
+    private static final Logger logger = LoggerFactory.getLogger(DynamicFilterUtil.class);
+
+    /**
+     * Creates a FilterProvider based on `includeOnly` and `excludeOnly` parameters.
+     *
+     * @param includeFields Fields to include explicitly (`includeOnly`).
+     * @param excludeFields Fields to exclude explicitly (`excludeOnly`).
+     * @param rootClass     The root class to process.
+     * @return A configured FilterProvider for dynamic filtering.
+     */
+    public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
+        logger.info("Creating filters for root class: {}", rootClass.getSimpleName());
+        logger.info("Include fields: {}", includeFields);
+        logger.info("Exclude fields: {}", excludeFields);
+
+        Map<String, Set<String>> filters = new HashMap<>();
+        Set<Class<?>> visited = new HashSet<>();
+
+        // Process fields with constraints
+        processFields(includeFields, excludeFields, rootClass, "", filters, visited);
+
+        logger.info("Generated filters: {}", filters);
+        return buildFilterProvider(filters);
+    }
+
+    /**
+     * Processes fields dynamically, restricting to classes with `@JsonFilter` annotation or specific packages (e.g., `.dto`).
+     */
+    private static void processFields(Set<String> includeFields, Set<String> excludeFields, Class<?> clazz,
+                                      String prefix, Map<String, Set<String>> filters, Set<Class<?>> visited) {
+        if (visited.contains(clazz)) {
+            return; // Prevent infinite recursion
+        }
+        visited.add(clazz);
+
+        if (!isRelevantClass(clazz)) {
+            logger.debug("Skipping irrelevant class: {}", clazz.getName());
+            return;
         }
 
-        filterProvider.addFilter(filterName, filter);
-    });
+        String filterName = clazz.getSimpleName() + "Filter";
+        Set<String> relevantFields = new HashSet<>();
+        logger.debug("Processing class: {}, Prefix: {}", clazz.getSimpleName(), prefix);
 
-    return filterProvider;
+        for (Field field : clazz.getDeclaredFields()) {
+            String fieldName = field.getName();
+            String fullName = prefix.isEmpty() ? fieldName : prefix + "." + fieldName;
+
+            boolean includeField = includeFields.isEmpty() || includeFields.contains(fullName) || includeFields.contains(prefix);
+            boolean excludeField = excludeFields.contains(fullName) || excludeFields.contains(fieldName);
+
+            if (includeField && !excludeField) {
+                relevantFields.add(fieldName);
+            }
+
+            // Handle nested objects and collections
+            if (!field.getType().isPrimitive() && !field.getType().equals(String.class)) {
+                Class<?> fieldType = field.getType();
+
+                // If the field is a collection, extract its generic type
+                if (Collection.class.isAssignableFrom(fieldType)) {
+                    fieldType = getCollectionElementType(field);
+                }
+
+                if (fieldType != null) {
+                    processFields(includeFields, excludeFields, fieldType, fullName, filters, visited);
+
+                    // Retain parent objects only if they have relevant nested fields
+                    if (shouldRetainParent(includeFields, excludeFields, fullName)) {
+                        relevantFields.add(fieldName);
+                    }
+                }
+            }
+        }
+
+        filters.put(filterName, relevantFields);
+        logger.info("Filter for class {}: {}", clazz.getSimpleName(), relevantFields);
+    }
+
+    private static Class<?> getCollectionElementType(Field field) {
+        try {
+            return (Class<?>) ((java.lang.reflect.ParameterizedType) field.getGenericType()).getActualTypeArguments()[0];
+        } catch (Exception e) {
+            logger.warn("Could not determine collection element type for field: {}", field.getName(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Determines if a class is relevant based on the presence of `@JsonFilter` or its package.
+     *
+     * @param clazz The class to evaluate.
+     * @return True if the class is relevant, false otherwise.
+     */
+    private static boolean isRelevantClass(Class<?> clazz) {
+        // Check for @JsonFilter annotation
+        if (clazz.isAnnotationPresent(JsonFilter.class)) {
+            return true;
+        }
+
+        // Restrict to classes in the `.dto` package
+        String packageName = clazz.getPackage().getName();
+        return packageName.contains(".dto");
+    }
+
+    /**
+     * Determines if a parent object should be retained based on `includeOnly` or `excludeOnly`.
+     */
+    private static boolean shouldRetainParent(Set<String> includeFields, Set<String> excludeFields, String parentPath) {
+        return includeFields.stream().anyMatch(field -> field.startsWith(parentPath + ".")) ||
+                excludeFields.stream().anyMatch(field -> field.startsWith(parentPath + "."));
+    }
+
+    /**
+     * Builds the FilterProvider from the filters map.
+     */
+    private static FilterProvider buildFilterProvider(Map<String, Set<String>> filters) {
+        SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+        filters.forEach((className, fields) -> {
+            SimpleBeanPropertyFilter filter = fields.isEmpty()
+                    ? SimpleBeanPropertyFilter.filterOutAll()
+                    : SimpleBeanPropertyFilter.filterOutAllExcept(fields);
+            logger.debug("Adding filter for class: {}, Fields: {}", className, fields);
+            filterProvider.addFilter(className, filter);
+        });
+
+        filterProvider.setFailOnUnknownId(false);
+        return filterProvider;
+    }
 }
+
+
+package com.example.demo.interceptor;
+
+import com.example.demo.model.dto.AccountDetailsResponse;
+import com.example.demo.util.DynamicFilterUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ser.FilterProvider;
+import org.springframework.stereotype.Component;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+@Component
+public class DynamicFilterInterceptor implements HandlerInterceptor {
+
+    private final ObjectMapper objectMapper;
+
+    public DynamicFilterInterceptor(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
+
+        Set<String> includeFields = includeOnly != null ? new HashSet<>(Arrays.asList(includeOnly.split(","))) : new HashSet<>();
+        Set<String> excludeFields = excludeOnly != null ? new HashSet<>(Arrays.asList(excludeOnly.split(","))) : new HashSet<>();
+
+        // Determine the response class dynamically
+        Class<?> responseType = getResponseType(handler);
+        if (responseType != null) {
+            // Apply dynamic filters
+            FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, responseType);
+            objectMapper.setFilterProvider(filters);
+        }
+
+        return true;
+    }
+
+    /**
+     * Extracts the return type of the controller method dynamically.
+     */
+    private Class<?> getResponseType(Object handler) {
+        if (handler instanceof HandlerMethod) {
+            HandlerMethod handlerMethod = (HandlerMethod) handler;
+            return handlerMethod.getMethod().getReturnType();
+        }
+        return null;
+    }
+}
+
+package com.example.demo.interceptor;
+
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+
+    private final DynamicFilterInterceptor dynamicFilterInterceptor;
+
+    public WebConfig(DynamicFilterInterceptor dynamicFilterInterceptor) {
+
+        this.dynamicFilterInterceptor = dynamicFilterInterceptor;
+
+    }
+
+    public void addInterceptors (InterceptorRegistry registry) {
+
+        registry.addInterceptor(dynamicFilterInterceptor).addPathPatterns("/accounts/**");
+
+    }
+
+    }
+
+package com.example.demo.interceptor;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class ObjectMapperConfig {
+
+    @Bean
+    public ObjectMapper objectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        // Add a default filter to prevent failures when no filter is found
+        mapper.setFilterProvider(new SimpleFilterProvider().setFailOnUnknownId(false));
+        return mapper;
+    }
+}
+
+package com.example.demo.controller;
+
+import com.example.demo.model.dto.AccountDetailsResponse;
+import com.example.demo.model.dto.TransactionDetailsResponse;
+import com.example.demo.service.AccountService;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/accounts")
+@RequiredArgsConstructor
+public class AccountController {
+
+    private final AccountService accountService;
+
+    @GetMapping(value = "/{accountNumber}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public AccountDetailsResponse getAccountDetails(@PathVariable String accountNumber,
+                                                    @RequestParam(required = false) String includeOnly,
+                                                    @RequestParam(required = false) String excludeOnly,
+                                                    HttpServletRequest request) {
+        AccountDetailsResponse accountDetailsResponse = accountService.getAccountDetails();
+        //request.setAttribute("res");
+        return accountDetailsResponse;
+    }
+
+    @GetMapping(value = "/transactions", produces = MediaType.APPLICATION_JSON_VALUE)
+    public TransactionDetailsResponse getAccountTransactions(
+                                                             @RequestParam(required = false) String includeOnly,
+                                                             @RequestParam(required = false) String excludeOnly,
+                                                             HttpServletRequest request) {
+        TransactionDetailsResponse transactionDetailsResponse = accountService.getAccountTransactionDetails();
+        //request.setAttribute("res");
+        return transactionDetailsResponse;
+    }
+
+
+
+}
+
+package com.example.demo.aspect;
+
+import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.annotation.AfterReturning;
+import org.aspectj.lang.annotation.AfterThrowing;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+@Aspect
+@Component
+public class LoggingAspect {
+
+    private static final Logger logger = LoggerFactory.getLogger(LoggingAspect.class);
+
+    // Log all method calls in the specified package
+    @Around("execution(* com.example.demo..*(..))")
+    public Object logMethodCall(ProceedingJoinPoint joinPoint) throws Throwable {
+        String methodName = joinPoint.getSignature().getName();
+        String className = joinPoint.getTarget().getClass().getSimpleName();
+
+        logger.info("Entering method: {}.{}", className, methodName);
+        logger.info("Arguments: {}", joinPoint.getArgs());
+
+        long startTime = System.currentTimeMillis();
+
+        try {
+            Object result = joinPoint.proceed(); // Proceed with the intercepted method
+            long elapsedTime = System.currentTimeMillis() - startTime;
+
+            logger.info("Exiting method: {}.{}; Execution time: {} ms", className, methodName, elapsedTime);
+            logger.info("Return Value: {}", result);
+
+            return result;
+        } catch (Exception ex) {
+            logger.error("Exception in method: {}.{}; Message: {}", className, methodName, ex.getMessage(), ex);
+            throw ex;
+        }
+    }
+
+    // Log after successful method execution
+    @AfterReturning(pointcut = "execution(* com.example.demo..*(..))", returning = "result")
+    public void logAfterReturning(JoinPoint joinPoint, Object result) {
+        String methodName = joinPoint.getSignature().getName();
+        logger.info("Method {} executed successfully. Returned: {}", methodName, result);
+    }
+
+    // Log after exceptions are thrown
+    @AfterThrowing(pointcut = "execution(* com.example.demo..*(..))", throwing = "exception")
+    public void logAfterThrowing(JoinPoint joinPoint, Exception exception) {
+        String methodName = joinPoint.getSignature().getName();
+        logger.error("Exception thrown in method {}. Exception: {}", methodName, exception.getMessage());
+    }
+}
+package com.example.demo.service;
+
+import com.example.demo.model.dto.*;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+@Service
+public class AccountService {
+
+    public AccountDetailsResponse getAccountDetails() {
+        return AccountDetailsResponse.builder()
+                .account(AccountDetails.builder().accountId("1").accountName("Test").accountNumber("1234567890").build())
+                .tmDetails(TMAccountDetails.builder().proprietary("proprietary").build())
+                .build();
+    }
+
+    public TransactionDetailsResponse getAccountTransactionDetails() {
+        return TransactionDetailsResponse.builder()
+                .meta(Meta.builder().info("info").id("id").build())
+                .transaction(List.of(Transaction.builder().accountName("1").accountNumber("1").build(), Transaction.builder().accountNumber("2").accountName("2").build()))
+                .build();
+    }
+}
+
+
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.4.3'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.example'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
+configurations {
+	compileOnly {
+		extendsFrom annotationProcessor
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-web-services'
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'jakarta.servlet:jakarta.servlet-api:6.0.0' // Use the latest version
+	implementation 'org.springframework.boot:spring-boot-starter-aop'
+
+	compileOnly 'org.projectlombok:lombok'
+	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+	annotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+
+//application.prop
+spring.application.name=demo
+server.error.whitelabel.enabled=false
+server.error.path=/error
+logging.level.root=INFO
+logging.level.com.example.demo=DEBUG
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} %-5level %logger{36} - %msg%n
