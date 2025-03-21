@@ -420,3 +420,148 @@ server.error.path=/error
 logging.level.root=INFO
 logging.level.com.example.demo=DEBUG
 logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} %-5level %logger{36} - %msg%n
+
+
+Here’s a **Confluence page draft** for documenting the recent changes:  
+
+---
+
+# **Validation Enhancements for `includeOnly` and `excludeOnly` Query Parameters**
+
+## **Overview**
+
+To enhance the security and integrity of our application, we’ve introduced validation logic for the `includeOnly` and `excludeOnly` query parameters across relevant API endpoints. These parameters allow clients to filter response fields dynamically, but they pose a risk if not properly validated.
+
+This document outlines the validation logic implemented, the need for sanitized query parameters, and the reasons behind these changes.
+
+---
+
+## **Why Validation is Necessary**
+
+Query parameters like `includeOnly` and `excludeOnly` are powerful for optimizing API responses by controlling which fields are included or excluded. However, they present potential vulnerabilities if not handled carefully:
+
+### **1. Security Risks:**
+- **Cross-Site Scripting (XSS)**: Malicious scripts could be injected via query parameters, leading to unauthorized data access or script execution in clients.
+- **Injection Attacks**: Invalid characters might be used to manipulate query behavior or execute unintended operations.
+
+### **2. Data Integrity:**
+Invalid or malformed field names may cause unpredictable API behavior or runtime errors, affecting the system's reliability.
+
+### **3. Consistency:**
+By enforcing consistent validation logic across endpoints, the application’s behavior becomes predictable and easier to maintain.
+
+---
+
+## **Validation Logic**
+
+The validation logic is centralized to maintain consistency and avoid redundancy across multiple endpoints.
+
+### **Key Validation Rules:**
+
+1. **Exclusive Parameter Usage:**
+   - **Rule**: Only one of `includeOnly` or `excludeOnly` can be used in a single request.
+   - **Reason**: Using both can cause ambiguity in filtering logic and lead to inconsistent API responses.
+   - **Response**: Returns HTTP **400 Bad Request** with a descriptive error message.
+
+2. **Allowed Characters Check:**
+   - **Rule**: Field names can only contain:
+     - Letters (`a-zA-Z`)
+     - Numbers (`0-9`)
+     - Underscores (`_`)
+     - Dots (`.`) for nested fields
+   - **Reason**: Restricts XSS and injection attacks by allowing only safe characters.
+   - **Response**: HTTP **400 Bad Request** with a message indicating invalid characters.
+
+3. **Valid Nested Field Format:**
+   - **Rule**: Nested fields (e.g., `account.accountName`) are allowed and should be validated correctly.
+   - **Reason**: Ensures nested structures are handled consistently and securely.
+
+4. **Error Handling:**
+   - All validation failures result in HTTP **400 Bad Request**, providing clients with actionable feedback.
+
+---
+
+## **Implementation Details**
+
+The validation logic is implemented in the `FieldValidatorUtil` class and applied globally via interceptors:
+
+### **FieldValidatorUtil.java**
+
+```java
+public class FieldValidatorUtil {
+    
+    private static final Pattern VALID_FIELD_PATTERN = Pattern.compile("^[a-zA-Z0-9_.]+$");
+
+    public static void validateParams(Set<String> includeFields, Set<String> excludeFields) {
+        if (includeFields != null && excludeFields != null && !includeFields.isEmpty() && !excludeFields.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
+                "Invalid request: You cannot use both 'includeOnly' and 'excludeOnly' at the same time.");
+        }
+
+        validateFieldFormat(includeFields, "includeOnly");
+        validateFieldFormat(excludeFields, "excludeOnly");
+    }
+
+    private static void validateFieldFormat(Set<String> fields, String paramName) {
+        if (fields == null) return;
+
+        for (String field : fields) {
+            if (!VALID_FIELD_PATTERN.matcher(field).matches()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
+                    "Invalid field in '" + paramName + "': " + field + 
+                    ". Allowed characters: letters, numbers, underscores (_), and dots (.) for nesting.");
+            }
+        }
+    }
+}
+```
+
+### **Interceptor Integration:**
+The `DynamicFilterInterceptor` invokes this validation before processing the request:
+
+```java
+@Override
+public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+    Set<String> includeFields = parseParameter(request.getParameter("includeOnly"));
+    Set<String> excludeFields = parseParameter(request.getParameter("excludeOnly"));
+
+    FieldValidatorUtil.validateParams(includeFields, excludeFields);
+
+    // Filter creation logic here...
+    return true;
+}
+
+private Set<String> parseParameter(String param) {
+    return param == null ? Collections.emptySet() : new HashSet<>(Arrays.asList(param.split(",")));
+}
+```
+
+---
+
+## **Benefits of Validation:**
+
+### **1. Enhanced Security:**
+- Prevents XSS and injection attacks.
+- Blocks unsafe characters.
+
+### **2. Consistent API Behavior:**
+- Clear rules across all endpoints.
+- Better client experience with precise error feedback.
+
+### **3. Improved Data Integrity:**
+- Avoids malformed requests from causing runtime errors or inconsistencies.
+
+### **4. Maintainability:**
+- Centralized logic via `FieldValidatorUtil`, reducing code duplication and simplifying future changes.
+
+---
+
+## **Conclusion**
+
+By introducing robust validation for the `includeOnly` and `excludeOnly` query parameters, we ensure the security, consistency, and reliability of our API responses. This change mitigates potential attacks while improving data integrity and maintainability.
+
+For further details or to discuss improvements, please contact the API development team.
+
+---
+
+**End of Document**
