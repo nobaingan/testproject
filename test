@@ -969,7 +969,70 @@ public String getData(
 }
 ```
 
----
+----------------------
+
+Yes, ideally it **should fail** because of the invalid query parameter `y`. Since `y` is not defined in your controller method, Spring should automatically reject the request or ignore the unknown parameter. However, here’s what actually happens:
+
+### Expected Behavior:
+1. If `@ValidQueryParam` is correctly applied, **the validation should fail** if `includeOnly=test` violates the regex rules.
+2. **The query parameter `y` is undefined** in your controller, so:
+   - Spring **ignores it** by default (it doesn't trigger an error).
+   - If you want it to fail when an unexpected query parameter is present, you'd need additional logic to strictly enforce allowed parameters.
+
+### How to Make It Fail for Unexpected Query Parameters:
+If you want strict validation where **ONLY** the expected parameters (`includeOnly`, `excludeOnly`) are allowed, you can:
+✅ **Manually validate request parameters in your controller** by checking `request.getParameterMap()`.  
+✅ **Use a whitelist approach** by rejecting any unknown keys.  
+✅ **Apply custom logic** that checks all provided parameters against the expected list.
+
+Example:
+
+```java
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
+
+import javax.servlet.http.HttpServletRequest;
+import java.util.Set;
+
+@RestController
+@RequestMapping("/accounts")
+public class AccountController {
+
+    private static final Set<String> ALLOWED_PARAMS = Set.of("includeOnly", "excludeOnly");
+
+    @GetMapping("/{accountNumber}")
+    public AccountDetailsResponse getAccountDetails(
+        @PathVariable String accountNumber,
+        @Valid @ValidQueryParam @RequestParam(required = false) String includeOnly,
+        @Valid @ValidQueryParam @RequestParam(required = false) String excludeOnly,
+        HttpServletRequest request) {
+
+        // Strictly enforce allowed query parameters
+        for (String param : request.getParameterMap().keySet()) {
+            if (!ALLOWED_PARAMS.contains(param)) {
+                throw new IllegalArgumentException("Unexpected query parameter: " + param);
+            }
+        }
+
+        return accountService.getAccountDetails();
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public String handleUnexpectedParams(IllegalArgumentException ex) {
+        return ex.getMessage();
+    }
+}
+```
+
+### 💡 Summary:
+- Spring **ignores unknown query parameters by default** unless you enforce strict validation.
+- **Apply a whitelist check** for expected parameters to block unexpected ones.
+- **Modify the validator** if you want a stricter policy.
+
+Would you like me to refine this approach further for your needs?
+
+--------------------------------------
 
 ### 🔥 **Comparison of All 4 Approaches**
 | Approach | Pros | Cons |
