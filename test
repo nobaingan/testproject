@@ -845,7 +845,7 @@ public class ResponseSchemaValidator {
 }
 ```
 
----
+-------------------
 
 ## **🔹 Approach 1: Dynamic DTO Validation**
 ### **Modify Validator to Use Dynamic Schema**
@@ -884,94 +884,106 @@ public class DynamicFieldValidator implements ConstraintValidator<ValidField, St
 
 ---
 
-### **Apply in DTO**
-```java
-import jakarta.validation.constraints.AssertTrue;
+Yes, you already have three approaches:  
 
-public class QueryParamsDTO {
+1. **Annotation-based approach** (directly using `@RequestParam` with `@Pattern`)  
+2. **Custom DTO approach** (`@Valid QueryParamsDTO` with `@Pattern` and `@AssertTrue`)  
+3. **Interceptor-based approach** (handling validation globally via `HandlerInterceptor`)  
 
-    @ValidField
-    private String includeOnly;
+### 🔍 **What Other Approaches Exist?**  
 
-    @ValidField
-    private String excludeOnly;
-
-    @AssertTrue(message = "Only one of 'includeOnly' or 'excludeOnly' should be provided.")
-    public boolean isValid() {
-        return includeOnly == null || excludeOnly == null;
-    }
-}
-```
+#### **4. AOP (Aspect-Oriented Programming) Approach**  
+You can use **Spring AOP** to create a validation aspect that runs **before** the controller method executes. This ensures that **all request methods using `includeOnly` and `excludeOnly`** automatically get validated.
 
 ---
 
-## **🔹 Approach 2: Dynamic Interceptor Validation**
+### ✅ **AOP-Based Validation Approach**
+📌 **Step 1: Create a Custom Annotation**  
 ```java
-import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.HandlerInterceptor;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
+import jakarta.validation.Constraint;
+import jakarta.validation.Payload;
+import java.lang.annotation.*;
 
-@Component
-public class DynamicQueryParamsInterceptor implements HandlerInterceptor {
+@Documented
+@Constraint(validatedBy = IncludeExcludeValidator.class)
+@Target({ ElementType.PARAMETER, ElementType.FIELD })
+@Retention(RetentionPolicy.RUNTIME)
+public @interface ValidIncludeExclude {
+    String message() default "Invalid includeOnly/excludeOnly parameter";
+    Class<?>[] groups() default {};
+    Class<? extends Payload>[] payload() default {};
+}
+```
 
+📌 **Step 2: Create the Validator Class**  
+```java
+import jakarta.validation.ConstraintValidator;
+import jakarta.validation.ConstraintValidatorContext;
+
+public class IncludeExcludeValidator implements ConstraintValidator<ValidIncludeExclude, String> {
+    
+    private static final String VALID_PATTERN = "^[a-zA-Z0-9.]+$";
+    
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        String includeOnly = request.getParameter("includeOnly");
-        String excludeOnly = request.getParameter("excludeOnly");
+    public boolean isValid(String value, ConstraintValidatorContext context) {
+        return value == null || value.matches(VALID_PATTERN);
+    }
+}
+```
 
+📌 **Step 3: Create an Aspect for Validation**  
+```java
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+import org.aspectj.lang.JoinPoint;
+import org.springframework.stereotype.Component;
+
+@Aspect
+@Component
+public class QueryParamsValidationAspect {
+
+    @Before("execution(* com.example.controller.*.*(..)) && args(includeOnly, excludeOnly, ..)")
+    public void validateQueryParams(JoinPoint joinPoint, String includeOnly, String excludeOnly) {
         if (includeOnly != null && excludeOnly != null) {
-            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Only one of 'includeOnly' or 'excludeOnly' should be provided.");
-            return false;
+            throw new IllegalArgumentException("Only one of 'includeOnly' or 'excludeOnly' should be provided.");
         }
-
-        Map<String, Object> apiResponse = getMockApiResponse();
-        Set<String> validFields = ResponseSchemaValidator.extractValidFields(apiResponse);
-        Set<String> validNestedFields = validFields.stream()
-            .flatMap(key -> ResponseSchemaValidator.extractNestedFields(apiResponse, key).stream())
-            .collect(Collectors.toSet());
-
-        if (!isValidField(includeOnly, validFields, validNestedFields) || 
-            !isValidField(excludeOnly, validFields, validNestedFields)) {
-            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid field value.");
-            return false;
+        if ((includeOnly != null && !includeOnly.matches("^[a-zA-Z0-9.]+$")) ||
+            (excludeOnly != null && !excludeOnly.matches("^[a-zA-Z0-9.]+$"))) {
+            throw new IllegalArgumentException("Invalid characters in includeOnly/excludeOnly");
         }
-
-        return true;
     }
+}
+```
 
-    private boolean isValidField(String field, Set<String> validFields, Set<String> validNestedFields) {
-        return field == null || validFields.contains(field) || validNestedFields.contains(field);
-    }
+📌 **Step 4: Use It in Your Controller**  
+```java
+@GetMapping("/data")
+public String getData(
+    @ValidIncludeExclude
+    @RequestParam(value = "includeOnly", required = false) String includeOnly,
 
-    private Map<String, Object> getMockApiResponse() {
-        return Map.of(
-            "transactions", Map.of("details", "some details"),
-            "balances", Map.of("summary", "balance summary"),
-            "fees", "fee details"
-        );
-    }
+    @ValidIncludeExclude
+    @RequestParam(value = "excludeOnly", required = false) String excludeOnly
+) {
+    return "Validated Query Params";
 }
 ```
 
 ---
 
-## **📊 Decision Matrix (Dynamic Validation)**
-| Approach | Pros | Cons | Swagger Support? | Dynamic? |
-|----------|------|------|------------------|----------|
-| **DTO-Based (with Custom Validator)** | Integrates with `@Valid`, Swagger support | Requires a DTO | ✅ Yes | ✅ Yes |
-| **Interceptor-Based** | Works globally for all controllers | No Swagger support | ❌ No | ✅ Yes |
-| **Annotation-Based (without DTO)** | Simple, works per field | Not reusable across controllers | ✅ Yes | ✅ Yes |
+### 🔥 **Comparison of All 4 Approaches**
+| Approach | Pros | Cons |
+|----------|------|------|
+| **Annotation-Based (`@RequestParam`)** | Simple, No DTO required, Works with Swagger | Cannot reuse logic, Duplicates validation |
+| **DTO-Based (`QueryParamsDTO`)** | Clean & Reusable, Works well with Swagger, Centralized validation | Requires extra class |
+| **Interceptor-Based** | Global control, Can apply logic across multiple controllers | Slightly complex, Not visible in Swagger |
+| **AOP-Based** | Centralized, No controller modification required, Works dynamically | Requires Aspect knowledge, Harder to debug |
 
 ---
 
-## **🏆 Which One to Choose?**
-- ✅ **For Swagger and structured validation → DTO-Based**  
-- ✅ **For global enforcement → Interceptor-Based**  
-- ✅ **For simple field validation → Annotation-Based**  
+### 🚀 **Final Thoughts**  
+If you want **Swagger support + best maintainability**, go with **DTO-based validation**.  
+If you need **global control**, use the **Interceptor** approach.  
+If you prefer **clean controllers without modifying them**, **AOP-based validation** is a good choice.  
 
-This ensures that validation dynamically adapts to changes in the API response. 🚀  
-Would you like further refinements? 😊
+Would you like a more detailed implementation of any specific approach? 😊
