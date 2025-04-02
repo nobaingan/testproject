@@ -563,279 +563,415 @@ By introducing robust validation for the `includeOnly` and `excludeOnly` query p
 For further details or to discuss improvements, please contact the API development team.
 
 ---
-
-**End of Document**
-Here are multiple approaches to achieve your goal. Each approach ensures:  
-✅ **Prevents Cross-Site Scripting (XSS)**  
-✅ **Only `includeOnly` OR `excludeOnly` can be present (not both together)**  
-✅ **Validates fields to allow only `a-z, A-Z, 0-9, _, .` (e.g., `account.transactions` is valid)**  
-✅ **If both parameters are missing, returns a full response**  
+Here's a complete overview of all possible approaches to validating query parameters (`includeOnly` and `excludeOnly`) in a Spring Boot application. I'll provide a high-level summary and a full implementation of each approach, followed by a decision matrix comparing them.  
 
 ---
 
-## **🔹 Approach 1: Using Spring Interceptor (Recommended)**
-This approach uses a **Spring `HandlerInterceptor`**, as shown earlier.  
+# **🔍 Overview of Approaches**  
 
-### ✅ **Implementation**
+### ✅ **1. Annotation-Based Approach (`@RequestParam` + Validation Annotations)**
+- Uses **Spring’s built-in validation** annotations like `@Pattern`.
+- Simple and easy to implement.
+- Not reusable across multiple controllers.
+
+### ✅ **2. DTO-Based Approach (`@Valid QueryParamsDTO`)**
+- Defines a separate DTO (`Data Transfer Object`) for query parameters.
+- Uses **Bean Validation** (`@Pattern`, `@AssertTrue`).
+- Works well with **Swagger** and ensures cleaner controllers.
+
+### ✅ **3. Interceptor-Based Approach (`HandlerInterceptor`)**
+- Applies **global** validation before reaching controllers.
+- Great for enforcing rules across multiple endpoints.
+- Not visible in **Swagger**, making debugging harder.
+
+### ✅ **4. AOP-Based Approach (`@Aspect`)**
+- Uses **Aspect-Oriented Programming (AOP)** to validate query parameters.
+- **Non-intrusive**, meaning it doesn’t modify controllers directly.
+- Centralized validation logic across multiple endpoints.
+
+---
+
+# **1️⃣ Annotation-Based Approach**  
+### 📌 **Implementation**
 ```java
+import jakarta.validation.constraints.Pattern;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api")
+public class QueryParamController {
+
+    @GetMapping("/data")
+    public String getData(
+        @RequestParam(value = "includeOnly", required = false) 
+        @Pattern(regexp = "^[a-zA-Z0-9.]+$", message = "Invalid includeOnly format") String includeOnly,
+
+        @RequestParam(value = "excludeOnly", required = false) 
+        @Pattern(regexp = "^[a-zA-Z0-9.]+$", message = "Invalid excludeOnly format") String excludeOnly
+    ) {
+        if (includeOnly != null && excludeOnly != null) {
+            throw new IllegalArgumentException("Only one of 'includeOnly' or 'excludeOnly' should be provided.");
+        }
+        return "Validated Query Params";
+    }
+}
+```
+
+### 🟢 **Pros**
+- Simple, minimal code.
+- Works **out-of-the-box** with Spring validation.
+- No extra classes required.
+
+### 🔴 **Cons**
+- **Duplicate logic** if used in multiple controllers.
+- No centralized validation.
+
+---
+
+# **2️⃣ DTO-Based Approach**
+### 📌 **Implementation**
+#### Step 1: Define DTO  
+```java
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Pattern;
+
+public class QueryParamsDTO {
+
+    @Pattern(regexp = "^[a-zA-Z0-9.]+$", message = "Invalid includeOnly format")
+    private String includeOnly;
+
+    @Pattern(regexp = "^[a-zA-Z0-9.]+$", message = "Invalid excludeOnly format")
+    private String excludeOnly;
+
+    @AssertTrue(message = "Only one of 'includeOnly' or 'excludeOnly' should be provided.")
+    public boolean isValid() {
+        return includeOnly == null || excludeOnly == null;
+    }
+
+    // Getters and Setters
+}
+```
+
+#### Step 2: Use in Controller  
+```java
+@RestController
+@RequestMapping("/api")
+public class QueryParamController {
+
+    @GetMapping("/data")
+    public String getData(@Valid QueryParamsDTO queryParams) {
+        return "Validated Query Params: " + queryParams;
+    }
+}
+```
+
+### 🟢 **Pros**
+- **Clean controller code**.
+- Centralized validation in DTO.
+- Works **well with Swagger**.
+
+### 🔴 **Cons**
+- Requires **additional class (DTO)**.
+- Can feel unnecessary for simple APIs.
+
+---
+
+# **3️⃣ Interceptor-Based Approach**
+### 📌 **Implementation**
+#### Step 1: Create an Interceptor  
+```java
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerInterceptor;
+
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.web.servlet.HandlerInterceptor;
-import org.apache.commons.text.StringEscapeUtils;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.regex.Pattern;
 
-public class CustomInterceptor implements HandlerInterceptor {
-
-    private static final Pattern VALID_FIELD_PATTERN = Pattern.compile("^[a-zA-Z0-9_.]+$");
+@Component
+public class QueryParamsInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        Set<String> includeFields = parseParameter(request.getParameter("includeOnly"));
-        Set<String> excludeFields = parseParameter(request.getParameter("excludeOnly"));
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
 
-        if (!includeFields.isEmpty() && !excludeFields.isEmpty()) {
-            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Cannot use both 'includeOnly' and 'excludeOnly'.");
+        if (includeOnly != null && excludeOnly != null) {
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Only one of 'includeOnly' or 'excludeOnly' should be provided.");
             return false;
         }
 
-        try {
-            validateFields(includeFields, "includeOnly");
-            validateFields(excludeFields, "excludeOnly");
-        } catch (IllegalArgumentException e) {
-            response.sendError(HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
+        if ((includeOnly != null && !includeOnly.matches("^[a-zA-Z0-9.]+$")) ||
+            (excludeOnly != null && !excludeOnly.matches("^[a-zA-Z0-9.]+$"))) {
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid characters in query parameters.");
+            return false;
+        }
+
+        return true;
+    }
+}
+```
+
+#### Step 2: Register the Interceptor  
+```java
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+
+    @Autowired
+    private QueryParamsInterceptor queryParamsInterceptor;
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(queryParamsInterceptor);
+    }
+}
+```
+
+### 🟢 **Pros**
+- **Applies globally** without modifying controllers.
+- Useful for **cross-cutting concerns** like security.
+
+### 🔴 **Cons**
+- **Not visible in Swagger**.
+- **More setup required** than annotations.
+
+---
+
+# **4️⃣ AOP-Based Approach**
+### 📌 **Implementation**
+#### Step 1: Create a Custom Annotation  
+```java
+import jakarta.validation.Constraint;
+import jakarta.validation.Payload;
+import java.lang.annotation.*;
+
+@Documented
+@Constraint(validatedBy = IncludeExcludeValidator.class)
+@Target({ ElementType.PARAMETER, ElementType.FIELD })
+@Retention(RetentionPolicy.RUNTIME)
+public @interface ValidIncludeExclude {
+    String message() default "Invalid includeOnly/excludeOnly parameter";
+    Class<?>[] groups() default {};
+    Class<? extends Payload>[] payload() default {};
+}
+```
+
+#### Step 2: Implement AOP Validation  
+```java
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+import org.aspectj.lang.JoinPoint;
+import org.springframework.stereotype.Component;
+
+@Aspect
+@Component
+public class QueryParamsValidationAspect {
+
+    @Before("execution(* com.example.controller.*.*(..)) && args(includeOnly, excludeOnly, ..)")
+    public void validateQueryParams(JoinPoint joinPoint, String includeOnly, String excludeOnly) {
+        if (includeOnly != null && excludeOnly != null) {
+            throw new IllegalArgumentException("Only one of 'includeOnly' or 'excludeOnly' should be provided.");
+        }
+        if ((includeOnly != null && !includeOnly.matches("^[a-zA-Z0-9.]+$")) ||
+            (excludeOnly != null && !excludeOnly.matches("^[a-zA-Z0-9.]+$"))) {
+            throw new IllegalArgumentException("Invalid characters in includeOnly/excludeOnly");
+        }
+    }
+}
+```
+
+### 🟢 **Pros**
+- **Non-intrusive**, doesn’t modify controllers.
+- **Works globally** across multiple controllers.
+
+### 🔴 **Cons**
+- **More complex to debug**.
+- **Not beginner-friendly**.
+
+---
+
+# **📊 Decision Matrix**
+| Approach | Best For | Pros | Cons |
+|----------|---------|------|------|
+| **Annotation-Based** | Simple APIs | Easy to implement, No extra classes | Not reusable |
+| **DTO-Based** | APIs with Swagger | Clean code, Works well with `@Valid` | Extra class needed |
+| **Interceptor-Based** | Global validation | Applies validation to all controllers | Not visible in Swagger |
+| **AOP-Based** | Cross-cutting concerns | No changes in controllers, Reusable | More complex to debug |
+
+### **🏆 Which One to Choose?**
+- ✅ **For simplicity → Annotation-Based**
+- ✅ **For Swagger support → DTO-Based**
+- ✅ **For global enforcement → Interceptor**
+- ✅ **For non-intrusive validation → AOP-Based**
+
+--------------------------------------
+Yes! The validation can be dynamic based on the response structure. Instead of hardcoding valid fields, you can extract them dynamically from your actual response data. Here’s how you can do it across different approaches:  
+
+---
+
+## **🔹 Dynamic Validation Based on Response**
+### **1️⃣ How It Works**
+- Instead of a **static list** (`VALID_FIELDS`), fetch valid fields **dynamically** from the API response structure.
+- Extract keys dynamically from a **JSON Schema**, a **Database**, or a **Service Layer**.
+- This ensures that if the response format changes, the validation updates automatically.
+
+---
+
+## **🔹 Dynamic Approach Implementation**
+### **🔸 Step 1: Create a Utility to Extract Allowed Fields**
+```java
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+public class ResponseSchemaValidator {
+
+    public static Set<String> extractValidFields(Map<String, Object> responseData) {
+        return responseData.keySet();  // Extract top-level keys
+    }
+
+    public static Set<String> extractNestedFields(Map<String, Object> responseData, String key) {
+        Object value = responseData.get(key);
+        if (value instanceof Map) {
+            return ((Map<String, Object>) value).keySet().stream()
+                .map(subKey -> key + "." + subKey)  // Format as "transactions.details"
+                .collect(Collectors.toSet());
+        }
+        return Set.of(); // No nested fields
+    }
+}
+```
+
+---
+
+## **🔹 Approach 1: Dynamic DTO Validation**
+### **Modify Validator to Use Dynamic Schema**
+```java
+import jakarta.validation.ConstraintValidator;
+import jakarta.validation.ConstraintValidatorContext;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+
+public class DynamicFieldValidator implements ConstraintValidator<ValidField, String> {
+
+    @Override
+    public boolean isValid(String value, ConstraintValidatorContext context) {
+        if (value == null) return true;  // Optional parameter
+        
+        Map<String, Object> mockResponse = getMockApiResponse(); // Fetch API response
+        Set<String> validFields = ResponseSchemaValidator.extractValidFields(mockResponse);
+        Set<String> validNestedFields = validFields.stream()
+            .flatMap(key -> ResponseSchemaValidator.extractNestedFields(mockResponse, key).stream())
+            .collect(Collectors.toSet());
+
+        return validFields.contains(value) || validNestedFields.contains(value);
+    }
+
+    private Map<String, Object> getMockApiResponse() {
+        // Simulating an API response structure dynamically
+        Map<String, Object> mockResponse = new HashMap<>();
+        mockResponse.put("transactions", Map.of("details", "some details"));
+        mockResponse.put("balances", Map.of("summary", "balance summary"));
+        mockResponse.put("fees", "fee details");
+        return mockResponse;
+    }
+}
+```
+
+---
+
+### **Apply in DTO**
+```java
+import jakarta.validation.constraints.AssertTrue;
+
+public class QueryParamsDTO {
+
+    @ValidField
+    private String includeOnly;
+
+    @ValidField
+    private String excludeOnly;
+
+    @AssertTrue(message = "Only one of 'includeOnly' or 'excludeOnly' should be provided.")
+    public boolean isValid() {
+        return includeOnly == null || excludeOnly == null;
+    }
+}
+```
+
+---
+
+## **🔹 Approach 2: Dynamic Interceptor Validation**
+```java
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerInterceptor;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+@Component
+public class DynamicQueryParamsInterceptor implements HandlerInterceptor {
+
+    @Override
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
+
+        if (includeOnly != null && excludeOnly != null) {
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Only one of 'includeOnly' or 'excludeOnly' should be provided.");
+            return false;
+        }
+
+        Map<String, Object> apiResponse = getMockApiResponse();
+        Set<String> validFields = ResponseSchemaValidator.extractValidFields(apiResponse);
+        Set<String> validNestedFields = validFields.stream()
+            .flatMap(key -> ResponseSchemaValidator.extractNestedFields(apiResponse, key).stream())
+            .collect(Collectors.toSet());
+
+        if (!isValidField(includeOnly, validFields, validNestedFields) || 
+            !isValidField(excludeOnly, validFields, validNestedFields)) {
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid field value.");
             return false;
         }
 
         return true;
     }
 
-    private Set<String> parseParameter(String param) {
-        return (param == null || param.isEmpty()) ? new HashSet<>() : new HashSet<>(Arrays.asList(param.split(",")));
+    private boolean isValidField(String field, Set<String> validFields, Set<String> validNestedFields) {
+        return field == null || validFields.contains(field) || validNestedFields.contains(field);
     }
 
-    private void validateFields(Set<String> fields, String paramName) {
-        for (String field : fields) {
-            String sanitizedField = StringEscapeUtils.escapeHtml4(field);
-            if (!VALID_FIELD_PATTERN.matcher(sanitizedField).matches()) {
-                throw new IllegalArgumentException("Invalid field in '" + paramName + "': " + field);
-            }
-        }
-    }
-}
-```
-### ✅ **Pros**
-✔ Efficient for request validation  
-✔ Centralized control over all incoming requests  
-
-### ❌ **Cons**
-✖ Requires interceptor registration  
-✖ Adds extra processing overhead for every request  
-
----
-
-## **🔹 Approach 2: Using Spring `@RequestParam` Validation in Controller**
-This approach **directly validates query parameters** in the controller.
-
-### ✅ **Implementation**
-```java
-import org.apache.commons.text.StringEscapeUtils;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.regex.Pattern;
-
-@RestController
-@RequestMapping("/api/data")
-public class DataController {
-
-    private static final Pattern VALID_FIELD_PATTERN = Pattern.compile("^[a-zA-Z0-9_.]+$");
-
-    @GetMapping
-    public String getData(
-        @RequestParam(value = "includeOnly", required = false) String includeOnly,
-        @RequestParam(value = "excludeOnly", required = false) String excludeOnly
-    ) {
-        Set<String> includeFields = parseParameter(includeOnly);
-        Set<String> excludeFields = parseParameter(excludeOnly);
-
-        if (!includeFields.isEmpty() && !excludeFields.isEmpty()) {
-            throw new IllegalArgumentException("Cannot use both 'includeOnly' and 'excludeOnly'.");
-        }
-
-        validateFields(includeFields, "includeOnly");
-        validateFields(excludeFields, "excludeOnly");
-
-        return "Filtered Data";
-    }
-
-    private Set<String> parseParameter(String param) {
-        return (param == null || param.isEmpty()) ? new HashSet<>() : new HashSet<>(Arrays.asList(param.split(",")));
-    }
-
-    private void validateFields(Set<String> fields, String paramName) {
-        for (String field : fields) {
-            String sanitizedField = StringEscapeUtils.escapeHtml4(field);
-            if (!VALID_FIELD_PATTERN.matcher(sanitizedField).matches()) {
-                throw new IllegalArgumentException("Invalid field in '" + paramName + "': " + field);
-            }
-        }
+    private Map<String, Object> getMockApiResponse() {
+        return Map.of(
+            "transactions", Map.of("details", "some details"),
+            "balances", Map.of("summary", "balance summary"),
+            "fees", "fee details"
+        );
     }
 }
 ```
-### ✅ **Pros**
-✔ Simple to implement  
-✔ No need to register an interceptor  
-
-### ❌ **Cons**
-✖ Less reusable (validations only apply to this controller)  
-✖ Not centralized  
 
 ---
 
-## **🔹 Approach 3: Using `@ControllerAdvice` for Global Validation**
-This approach **centralizes validation** in a global exception handler.
-
-### ✅ **Implementation**
-```java
-import org.apache.commons.text.StringEscapeUtils;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.*;
-
-@RestController
-@RequestMapping("/api/data")
-public class DataController {
-
-    @GetMapping
-    public String getData(
-        @RequestParam(value = "includeOnly", required = false) String includeOnly,
-        @RequestParam(value = "excludeOnly", required = false) String excludeOnly
-    ) {
-        ValidationUtils.validateParameters(includeOnly, excludeOnly);
-        return "Filtered Data";
-    }
-}
-
-class ValidationUtils {
-    private static final Pattern VALID_FIELD_PATTERN = Pattern.compile("^[a-zA-Z0-9_.]+$");
-
-    public static void validateParameters(String includeOnly, String excludeOnly) {
-        Set<String> includeFields = parseParameter(includeOnly);
-        Set<String> excludeFields = parseParameter(excludeOnly);
-
-        if (!includeFields.isEmpty() && !excludeFields.isEmpty()) {
-            throw new IllegalArgumentException("Cannot use both 'includeOnly' and 'excludeOnly'.");
-        }
-
-        validateFields(includeFields, "includeOnly");
-        validateFields(excludeFields, "excludeOnly");
-    }
-
-    private static Set<String> parseParameter(String param) {
-        return (param == null || param.isEmpty()) ? new HashSet<>() : new HashSet<>(Arrays.asList(param.split(",")));
-    }
-
-    private static void validateFields(Set<String> fields, String paramName) {
-        for (String field : fields) {
-            String sanitizedField = StringEscapeUtils.escapeHtml4(field);
-            if (!VALID_FIELD_PATTERN.matcher(sanitizedField).matches()) {
-                throw new IllegalArgumentException("Invalid field in '" + paramName + "': " + field);
-            }
-        }
-    }
-}
-
-@ControllerAdvice
-class GlobalExceptionHandler {
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<String> handleInvalidFields(IllegalArgumentException ex) {
-        return new ResponseEntity<>(ex.getMessage(), HttpStatus.BAD_REQUEST);
-    }
-}
-```
-### ✅ **Pros**
-✔ Centralized error handling  
-✔ Keeps controller clean  
-
-### ❌ **Cons**
-✖ Adds complexity with extra files  
+## **📊 Decision Matrix (Dynamic Validation)**
+| Approach | Pros | Cons | Swagger Support? | Dynamic? |
+|----------|------|------|------------------|----------|
+| **DTO-Based (with Custom Validator)** | Integrates with `@Valid`, Swagger support | Requires a DTO | ✅ Yes | ✅ Yes |
+| **Interceptor-Based** | Works globally for all controllers | No Swagger support | ❌ No | ✅ Yes |
+| **Annotation-Based (without DTO)** | Simple, works per field | Not reusable across controllers | ✅ Yes | ✅ Yes |
 
 ---
 
-## **🔹 Approach 4: Using Spring Filters**
-If you **want to filter requests globally**, a **Spring Filter** can be used.
+## **🏆 Which One to Choose?**
+- ✅ **For Swagger and structured validation → DTO-Based**  
+- ✅ **For global enforcement → Interceptor-Based**  
+- ✅ **For simple field validation → Annotation-Based**  
 
-### ✅ **Implementation**
-```java
-import jakarta.servlet.*;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import org.apache.commons.text.StringEscapeUtils;
-
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.regex.Pattern;
-
-public class CustomFilter implements Filter {
-
-    private static final Pattern VALID_FIELD_PATTERN = Pattern.compile("^[a-zA-Z0-9_.]+$");
-
-    @Override
-    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
-        HttpServletRequest req = (HttpServletRequest) request;
-        HttpServletResponse res = (HttpServletResponse) response;
-
-        Set<String> includeFields = parseParameter(req.getParameter("includeOnly"));
-        Set<String> excludeFields = parseParameter(req.getParameter("excludeOnly"));
-
-        if (!includeFields.isEmpty() && !excludeFields.isEmpty()) {
-            res.sendError(HttpServletResponse.SC_BAD_REQUEST, "Cannot use both 'includeOnly' and 'excludeOnly'.");
-            return;
-        }
-
-        validateFields(includeFields, "includeOnly");
-        validateFields(excludeFields, "excludeOnly");
-
-        chain.doFilter(request, response);
-    }
-
-    private Set<String> parseParameter(String param) {
-        return (param == null || param.isEmpty()) ? new HashSet<>() : new HashSet<>(Arrays.asList(param.split(",")));
-    }
-
-    private void validateFields(Set<String> fields, String paramName) {
-        for (String field : fields) {
-            if (!VALID_FIELD_PATTERN.matcher(StringEscapeUtils.escapeHtml4(field)).matches()) {
-                throw new IllegalArgumentException("Invalid field in '" + paramName + "': " + field);
-            }
-        }
-    }
-}
-```
-### ✅ **Pros**
-✔ Works at a **low level** (before controllers)  
-✔ Centralized validation  
-
-### ❌ **Cons**
-✖ More complex to configure  
-
----
-
-## **🔹 Conclusion**
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Interceptor** (Best for APIs) | ✅ Centralized | ❌ Adds overhead |
-| **Controller Validation** | ✅ Simple | ❌ Not reusable |
-| **Global `@ControllerAdvice`** | ✅ Clean error handling | ❌ More files |
-| **Spring Filter** | ✅ Works at the lowest level | ❌ Harder to configure |
-
-Would you like **unit tests** for any approach? 🚀
+This ensures that validation dynamically adapts to changes in the API response. 🚀  
+Would you like further refinements? 😊
