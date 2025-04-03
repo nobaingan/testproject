@@ -139,3 +139,53 @@ class DynamicFilterUtilTest {
         assertEquals("{}", jsonResult);
     }
 }
+
+public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
+    logger.info("Creating filters for root class: {}", rootClass.getSimpleName());
+    logger.info("Include fields: {}", includeFields);
+    logger.info("Exclude fields: {}", excludeFields);
+
+    // If no filters are provided, return a filter that includes all fields (no filtering)
+    if (includeFields.isEmpty() && excludeFields.isEmpty()) {
+        logger.info("No filters provided. Returning unfiltered response.");
+        return buildUnfilteredFilterProvider(rootClass);  // Create a default filter that includes all fields
+    }
+
+    Map<String, Set<String>> filters = new HashMap<>();
+    Set<Class<?>> visited = new HashSet<>();
+
+    // Process fields with constraints
+    processFields(includeFields, excludeFields, rootClass, "", filters, visited);
+
+    // Remove filters that have no fields (empty filters)
+    filters.entrySet().removeIf(entry -> entry.getValue().isEmpty());
+
+    // If no filters remain, return a filter that includes all fields (no filtering)
+    if (filters.isEmpty()) {
+        logger.info("No valid filters applied. Returning unfiltered response.");
+        return buildUnfilteredFilterProvider(rootClass);  // Create a default filter that includes all fields
+    }
+
+    logger.info("Generated filters: {}", filters);
+    return buildFilterProvider(filters);
+}
+
+private static FilterProvider buildUnfilteredFilterProvider(Class<?> rootClass) {
+    // Create a default filter that includes all fields for the class
+    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+    SimpleBeanPropertyFilter filter = SimpleBeanPropertyFilter.serializeAll();  // Include all fields
+    filterProvider.addFilter(rootClass.getSimpleName() + "Filter", filter);
+    return filterProvider;
+}
+
+private static FilterProvider buildFilterProvider(Map<String, Set<String>> filters) {
+    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+    filters.forEach((className, fields) -> {
+        SimpleBeanPropertyFilter filter = fields.isEmpty() ? SimpleBeanPropertyFilter.filterOutAll() : SimpleBeanPropertyFilter.filterOutAllExcept(fields);
+        filterProvider.addFilter(className, filter);
+        logger.debug("Adding filter for class: {}, Fields: {}", className, fields);
+    });
+    filterProvider.setFailOnUnknownId(false);
+    return filterProvider;
+}
+
