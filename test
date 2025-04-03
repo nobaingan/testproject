@@ -1,37 +1,337 @@
-import javax.validation.ConstraintValidator;
-import javax.validation.ConstraintValidatorContext;
-import javax.validation.ConstraintViolationException;
+package com.example.demo.interceptor;
+
+import com.example.demo.util.DynamicFilterUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ser.FilterProvider;
+import org.springframework.stereotype.Component;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerInterceptor;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Pattern;
 
-public class ValidFieldValidator implements ConstraintValidator<ValidField, String> {
-    // Regex pattern for individual segments (allows only alphanumeric + dots)
-    private static final Pattern SEGMENT_PATTERN = Pattern.compile("^[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*$");
+@Component
+public class DynamicFilterInterceptor implements HandlerInterceptor {
+
+    private final ObjectMapper objectMapper;
+
+    // Pattern to validate query parameters (alphanumeric + dot)
+    private static final Pattern ALPHA_NUMERIC_DOT_PATTERN = Pattern.compile("^[a-zA-Z0-9\\.]+$");
+
+    public DynamicFilterInterceptor(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
 
     @Override
-    public boolean isValid(String value, ConstraintValidatorContext context) {
-        if (value == null || value.isEmpty()) {
-            return true; // Allow empty fields
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
+
+        // Validate query parameters
+        if (!validateQueryParameters(includeOnly, excludeOnly, response)) {
+            return false; // Stop further processing if validation fails
         }
 
-        String sanitizedValue = sanitize(value); // Step 1: Clean input
-        String[] segments = sanitizedValue.split(","); // Step 2: Split into parts
+        // Apply dynamic filtering logic
+        applyDynamicFiltering(request, includeOnly, excludeOnly, handler);
 
-        for (String segment : segments) {
-            if (!SEGMENT_PATTERN.matcher(segment).matches()) {
-                throw new ConstraintViolationException("Invalid query parameter format: " + segment, null);
-            }
-        }
-        return true;
+        return true; // Continue with the request processing
     }
 
     /**
-     * Sanitizes the input string by removing unwanted characters.
-     * Allows only alphanumeric characters, dots, and commas.
+     * Validates the query parameters to check if 'includeOnly' and 'excludeOnly' are mutually exclusive,
+     * and if their values are alphanumeric with dots.
      */
-    public static String sanitize(String input) {
-        if (input == null) {
-            return null;
+    private boolean validateQueryParameters(String includeOnly, String excludeOnly, HttpServletResponse response) throws Exception {
+        // Check if both includeOnly and excludeOnly are present
+        if (includeOnly != null && excludeOnly != null) {
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Only one of 'includeOnly' or 'excludeOnly' can be used at a time.");
+            return false; // Invalid parameters, return false to stop further processing
         }
-        return input.replaceAll("[^a-zA-Z0-9.,]", ""); // Remove unwanted characters
+
+        // Validate the query parameters to only contain alphanumeric characters and dots
+        if ((includeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(includeOnly).matches()) ||
+                (excludeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(excludeOnly).matches())) {
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid query parameter value. Only alphanumeric characters and '.' are allowed.");
+            return false; // Invalid parameter values, return false to stop further processing
+        }
+
+        return true; // Validation passed
+    }
+
+    /**
+     * Applies dynamic filtering logic based on the 'includeOnly' and 'excludeOnly' parameters.
+     */
+    private void applyDynamicFiltering(HttpServletRequest request, String includeOnly, String excludeOnly, Object handler) {
+        Set<String> includeFields = includeOnly != null ? new HashSet<>(Arrays.asList(includeOnly.split(","))) : new HashSet<>();
+        Set<String> excludeFields = excludeOnly != null ? new HashSet<>(Arrays.asList(excludeOnly.split(","))) : new HashSet<>();
+
+        // Determine the response class dynamically
+        Class<?> responseType = getResponseType(handler);
+        if (responseType != null) {
+            // Apply dynamic filters
+            FilterProvider filters = DynamicFilterUtil.createFilters(includeFields, excludeFields, responseType);
+            objectMapper.setFilterProvider(filters);
+        }
+    }
+
+    /**
+     * Extracts the return type of the controller method dynamically.
+     */
+    private Class<?> getResponseType(Object handler) {
+        if (handler instanceof HandlerMethod) {
+            HandlerMethod handlerMethod = (HandlerMethod) handler;
+            return handlerMethod.getMethod().getReturnType();
+        }
+        return null;
     }
 }
+------------------
+Yes, there are several alternative approaches to achieving query parameter validation and dynamic filtering in a Spring application. Below are some of the alternatives with pros and cons for each:
+
+### 1. **Spring AOP (Aspect-Oriented Programming)**
+   
+   You could use Spring AOP to implement the validation logic before the controller method is called, separating concerns cleanly.
+
+   **How It Works**:
+   - An aspect intercepts the method call to your controller.
+   - The aspect can perform pre-processing (like query parameter validation) before the method is executed.
+
+   **Steps**:
+   1. Define a custom annotation like `@ValidateQueryParams`.
+   2. Use an `@Aspect` to handle the validation logic for any method annotated with `@ValidateQueryParams`.
+
+   **Example**:
+
+   ```java
+   @Aspect
+   @Component
+   public class QueryParamValidationAspect {
+
+       private static final Pattern ALPHA_NUMERIC_DOT_PATTERN = Pattern.compile("^[a-zA-Z0-9\\.]+$");
+
+       @Before("@annotation(com.example.demo.annotation.ValidateQueryParams) && args(request,..)")
+       public void validateQueryParams(HttpServletRequest request) throws Throwable {
+           String includeOnly = request.getParameter("includeOnly");
+           String excludeOnly = request.getParameter("excludeOnly");
+
+           // Check if both includeOnly and excludeOnly are present
+           if (includeOnly != null && excludeOnly != null) {
+               throw new IllegalArgumentException("Only one of 'includeOnly' or 'excludeOnly' can be used at a time.");
+           }
+
+           // Validate alphanumeric + dot for both parameters
+           if ((includeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(includeOnly).matches()) ||
+               (excludeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(excludeOnly).matches())) {
+               throw new IllegalArgumentException("Invalid query parameter value. Only alphanumeric characters and '.' are allowed.");
+           }
+       }
+   }
+   ```
+
+   **Pros**:
+   - Clean separation of concerns, as the logic is abstracted out from the controller.
+   - Reusable across different controllers using the `@ValidateQueryParams` annotation.
+   - Reduces code duplication.
+
+   **Cons**:
+   - Slightly more complex to set up, especially for newcomers to AOP.
+   - More indirect control over the flow of the application.
+
+---
+
+### 2. **Custom Spring Validator**
+   
+   Instead of using filters or interceptors, you could create a custom Spring Validator that checks query parameters.
+
+   **How It Works**:
+   - You create a `@Valid` annotation that uses your custom validator to check the query parameters.
+   - The validator is invoked as part of Spring's validation process, before entering the controller method.
+
+   **Steps**:
+   1. Define a custom `@QueryParam` annotation.
+   2. Create a custom `ConstraintValidator` to validate the parameters.
+
+   **Example**:
+
+   ```java
+   @Target({ElementType.PARAMETER})
+   @Retention(RetentionPolicy.RUNTIME)
+   @Constraint(validatedBy = QueryParamValidator.class)
+   @interface QueryParam {
+       String message() default "Invalid query parameter";
+       Class<?>[] groups() default {};
+       Class<? extends Payload>[] payload() default {};
+   }
+
+   public class QueryParamValidator implements ConstraintValidator<QueryParam, HttpServletRequest> {
+
+       private static final Pattern ALPHA_NUMERIC_DOT_PATTERN = Pattern.compile("^[a-zA-Z0-9\\.]+$");
+
+       @Override
+       public boolean isValid(HttpServletRequest request, ConstraintValidatorContext context) {
+           String includeOnly = request.getParameter("includeOnly");
+           String excludeOnly = request.getParameter("excludeOnly");
+
+           if (includeOnly != null && excludeOnly != null) {
+               context.disableDefaultConstraintViolation();
+               context.buildConstraintViolationWithTemplate("Only one of 'includeOnly' or 'excludeOnly' can be used at a time.")
+                      .addConstraintViolation();
+               return false;
+           }
+
+           if ((includeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(includeOnly).matches()) ||
+               (excludeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(excludeOnly).matches())) {
+               context.disableDefaultConstraintViolation();
+               context.buildConstraintViolationWithTemplate("Invalid query parameter value. Only alphanumeric characters and '.' are allowed.")
+                      .addConstraintViolation();
+               return false;
+           }
+
+           return true;
+       }
+   }
+
+   @RestController
+   public class AccountController {
+
+       @GetMapping("/accounts/{id}")
+       public AccountDetailsResponse getAccountDetails(@QueryParam HttpServletRequest request, @PathVariable String id) {
+           // Controller logic goes here
+       }
+   }
+   ```
+
+   **Pros**:
+   - Leverages Spring's validation mechanism, which is a standardized approach.
+   - Can be used for both query parameters and request body validation.
+   - Very declarative and clean approach.
+
+   **Cons**:
+   - May be an overkill if the validation logic is simple and not reused across multiple endpoints.
+   - Adds complexity in managing custom annotations.
+
+---
+
+### 3. **Request Filters with Validation and Filtering Logic Together**
+
+   Another approach is to keep everything in a single request filter but separate validation and filtering into their respective private methods for readability.
+
+   **How It Works**:
+   - Instead of using an interceptor, you can use a `Filter` to validate and apply dynamic filtering. You can also choose to separate the validation and filtering logic for better maintainability.
+
+   **Example**:
+
+   ```java
+   @Component
+   public class QueryParamValidationFilter implements Filter {
+
+       private static final Pattern ALPHA_NUMERIC_DOT_PATTERN = Pattern.compile("^[a-zA-Z0-9\\.]+$");
+
+       @Override
+       public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain)
+               throws IOException, ServletException {
+
+           HttpServletRequest request = (HttpServletRequest) servletRequest;
+           HttpServletResponse response = (HttpServletResponse) servletResponse;
+
+           String includeOnly = request.getParameter("includeOnly");
+           String excludeOnly = request.getParameter("excludeOnly");
+
+           if (!validateQueryParams(includeOnly, excludeOnly, response)) {
+               return; // Stop further processing if validation fails
+           }
+
+           // Apply dynamic filtering logic (if necessary)
+           applyDynamicFiltering(request, includeOnly, excludeOnly);
+
+           // Continue the chain
+           filterChain.doFilter(servletRequest, servletResponse);
+       }
+
+       private boolean validateQueryParams(String includeOnly, String excludeOnly, HttpServletResponse response) throws IOException {
+           if (includeOnly != null && excludeOnly != null) {
+               response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Only one of 'includeOnly' or 'excludeOnly' can be used at a time.");
+               return false;
+           }
+
+           if ((includeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(includeOnly).matches()) ||
+               (excludeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(excludeOnly).matches())) {
+               response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid query parameter value. Only alphanumeric characters and '.' are allowed.");
+               return false;
+           }
+
+           return true;
+       }
+
+       private void applyDynamicFiltering(HttpServletRequest request, String includeOnly, String excludeOnly) {
+           // Apply dynamic filtering based on the provided query parameters
+       }
+
+       @Override
+       public void init(FilterConfig filterConfig) throws ServletException {
+       }
+
+       @Override
+       public void destroy() {
+       }
+   }
+   ```
+
+   **Pros**:
+   - All logic is centralized in a single place, easy to modify and understand.
+   - This approach can be globally applied, affecting all controllers.
+
+   **Cons**:
+   - Mixing validation and filtering in one filter could reduce readability.
+   - Might not be as flexible as AOP or custom annotations for fine-grained control.
+
+---
+
+### 4. **Spring Validation and Custom Annotations (with `@RequestParam` directly)**
+
+   If you only need to validate specific query parameters without creating a complex validation framework, you can use Spring’s `@Valid` and custom annotations combined with `@RequestParam`.
+
+   **Example**:
+
+   ```java
+   @RestController
+   public class AccountController {
+
+       @GetMapping("/accounts/{id}")
+       public AccountDetailsResponse getAccountDetails(
+           @RequestParam(value = "includeOnly", required = false) String includeOnly,
+           @RequestParam(value = "excludeOnly", required = false) String excludeOnly) {
+
+           // Controller logic here
+           if (includeOnly != null && excludeOnly != null) {
+               throw new IllegalArgumentException("Only one of 'includeOnly' or 'excludeOnly' can be used at a time.");
+           }
+
+           // Apply dynamic filtering here
+           return new AccountDetailsResponse();
+       }
+   }
+   ```
+
+   **Pros**:
+   - Clean, simple approach.
+   - Can be used directly in your controller without extra layers.
+   
+   **Cons**:
+   - Doesn’t scale well if you need more complex validation or filtering logic.
+
+---
+
+### Conclusion
+
+- **AOP** is a great option for modularizing validation across multiple controllers without cluttering business logic.
+- **Custom Validators** allow you to leverage Spring's validation system and cleanly apply rules to request parameters.
+- **Filters** give you global control over the request but could mix concerns if you're not careful with structuring your logic.
+- **Direct Controller Logic** can be effective for simpler use cases, but becomes harder to maintain as complexity increases.
+
+Each approach has its trade-offs, and the choice of which one to use depends on your project's complexity, maintainability, and how global or localized you want the solution to be.
