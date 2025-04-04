@@ -334,4 +334,114 @@ Yes, there are several alternative approaches to achieving query parameter valid
 - **Filters** give you global control over the request but could mix concerns if you're not careful with structuring your logic.
 - **Direct Controller Logic** can be effective for simpler use cases, but becomes harder to maintain as complexity increases.
 
+---------------
+
+package com.example.demo.validator;
+
+import jakarta.validation.Constraint;
+import jakarta.validation.Payload;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+// Custom annotation to validate query parameters with mutual exclusivity and sanitization.
+@Target({ ElementType.PARAMETER, ElementType.FIELD })
+@Retention(RetentionPolicy.RUNTIME)
+@Constraint(validatedBy = QueryParamValidator.class)  // Specify the validator class
+public @interface ValidQueryParam {
+
+    String message() default "Invalid query parameter.";  // Default error message
+
+    Class<?>[] groups() default {};  // Grouping constraints (optional)
+
+    Class<? extends Payload>[] payload() default {};  // Additional metadata (optional)
+}
+
+
+
+package com.example.demo.validator;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintValidator;
+import jakarta.validation.ConstraintValidatorContext;
+import org.springframework.beans.factory.annotation.Autowired;
+
+public class QueryParamValidator implements ConstraintValidator<ValidQueryParam, String> {
+
+    @Autowired
+    private HttpServletRequest request;  // Spring injects HttpServletRequest
+
+    private static final String VALID_PARAM_REGEX = "^[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*$";
+
+    @Override
+    public boolean isValid(String value, ConstraintValidatorContext context) {
+        // Validate mutual exclusivity of includeOnly and excludeOnly
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
+
+        if (includeOnly != null && excludeOnly != null) {
+            context.disableDefaultConstraintViolation();
+            context.buildConstraintViolationWithTemplate(" Only one of 'includeOnly' or 'excludeOnly' can be used at a time.")
+                    .addConstraintViolation();
+            return false;
+        }
+
+        // Validate the value with the regex
+        if (value != null && !value.matches(VALID_PARAM_REGEX)) {
+            context.disableDefaultConstraintViolation();
+            context.buildConstraintViolationWithTemplate(" Invalid query parameter value. Only alphanumeric and '.' are allowed.")
+                    .addConstraintViolation();
+            return false;
+        }
+
+        return true;
+    }
+}
+
+
+package com.example.demo.exception;
+
+import jakarta.validation.ConstraintViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@ControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<Map<String, String>> handleConstraintViolationException(ConstraintViolationException ex) {
+        Map<String, String> errors = new HashMap<>();
+
+        // Collect all validation errors
+        ex.getConstraintViolations().forEach(violation -> {
+            errors.put(violation.getPropertyPath().toString(), violation.getMessage());
+        });
+
+        // Return a response with 400 Bad Request status and the validation error details
+        return new ResponseEntity<>(errors, HttpStatus.BAD_REQUEST);
+    }
+
+    // You can handle other exceptions here if needed
+}
+
+
+
+
+  @GetMapping(value = "/dto/{accountNumber}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public AccountDetailsResponse getAccountDetailsDto(@PathVariable String accountNumber,
+                                                       @RequestParam(required = false) @ValidQueryParam String includeOnly,
+                                                     @RequestParam(required = false) @ValidQueryParam  String excludeOnly,
+                                                    HttpServletRequest request) {
+        AccountDetailsResponse accountDetailsResponse = accountService.getAccountDetails();
+        //request.setAttribute("res");
+        return accountDetailsResponse;
+    }
+
 Each approach has its trade-offs, and the choice of which one to use depends on your project's complexity, maintainability, and how global or localized you want the solution to be.
