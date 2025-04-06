@@ -445,3 +445,55 @@ public class GlobalExceptionHandler {
     }
 
 Each approach has its trade-offs, and the choice of which one to use depends on your project's complexity, maintainability, and how global or localized you want the solution to be.
+package com.example.demo.aspect;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponseWrapper;
+import jakarta.servlet.http.HttpServletResponseWrapper;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.annotation.Before;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import java.io.IOException;
+import java.util.regex.Pattern;
+
+@Aspect
+@Component
+public class QueryParamValidationAspect {
+
+    private static final Pattern ALPHA_NUMERIC_DOT_PATTERN = Pattern.compile("^[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*$");
+
+    @Before("execution(* com.example.demo.controller.AccountController.*(..))")
+    public void validateQueryParams(JoinPoint joinPoint) throws IOException {
+        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attributes == null) return;
+
+        HttpServletRequest request = attributes.getRequest();
+        HttpServletResponse response = attributes.getResponse();
+
+        String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
+
+        if (includeOnly != null && excludeOnly != null) {
+            if (response != null) {
+                response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Only one of 'includeOnly' or 'excludeOnly' can be used at a time.");
+            }
+            throw new IllegalArgumentException("Only one of 'includeOnly' or 'excludeOnly' can be used at a time.");
+        }
+
+        if ((includeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(includeOnly).matches()) ||
+                (excludeOnly != null && !ALPHA_NUMERIC_DOT_PATTERN.matcher(excludeOnly).matches())) {
+            if (response != null) {
+                response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid query parameter value. Only alphanumeric characters and '.' are allowed.");
+            }
+            throw new IllegalArgumentException("Invalid query parameter value. Only alphanumeric characters and '.' are allowed.");
+        }
+    }
+}
