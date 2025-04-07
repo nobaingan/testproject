@@ -558,3 +558,41 @@ class ValidationUtilTest {
         return str == null || str.trim().isEmpty() ? null : str;
     }
 }
+Here's a **refined and detailed Decision Matrix** for your goal of creating **centralized, reusable validation logic** (e.g., for query parameters like `includeOnly`, `excludeOnly`) to be used across multiple services:
+
+---
+
+### **Decision Matrix for Centralized Validation Logic**
+
+| **Approach**                  | **How It Works**                                                                 | **Pros**                                                                                                   | **Cons**                                                                                          | **Best Used When**                                                                 |
+|------------------------------|----------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
+| **Validator Utility Class**  | A static utility method that performs validation logic, invoked manually.       | - Simple to implement  <br> - Easily reusable <br> - Can be tested in isolation                            | - Needs explicit call in every controller <br> - Can be missed or misused                         | For lightweight validation in projects without Spring-specific needs              |
+| **Interceptor-Based Validation** | Implements `HandlerInterceptor` and performs validation in `preHandle()`        | - Centralized across endpoints <br> - Prevents execution of controller if validation fails <br> - Reusable | - Only works with HTTP requests <br> - Cannot validate method-level parameters                   | When validations are common across REST endpoints and should run before controllers |
+| **Annotation-Based Validation** | Custom annotations on controller parameters, linked to `@Constraint` validators | - Declarative <br> - Clean controller code <br> - Fine-grained validation                                  | - Boilerplate for custom annotations <br> - Harder to reuse across non-web contexts              | When validation is closely tied to individual parameters in REST methods           |
+| **AOP-Based Validation**     | Uses aspects (e.g., `@Before`) to inject validation based on annotations        | - Powerful and flexible <br> - Can apply to any method <br> - Cross-cutting logic is centralized           | - Harder to trace/debug <br> - Slight learning curve <br> - Can be overkill for simple checks     | For complex validations across layers (controller/service), especially in large apps |
+
+---
+
+### **Recommendation (based on your goals):**
+
+You're aiming to:
+- **Centralize logic**
+- **Apply it across services/endpoints**
+- **Package it as a reusable library**
+- **Optimize for performance (skip unnecessary service calls)**
+
+### **Best Approach: `Interceptor-Based Validation`**
+
+**Why:**
+- Allows **early validation** before any controller or service logic executes.
+- Can easily enforce **query param rules** (like exclusive `includeOnly`/`excludeOnly`) across projects.
+- Can be **packaged in a library** and plugged into any Spring Boot app by just registering the interceptor.
+
+---
+
+### **Hybrid Suggestion**
+You can combine:
+- **Interceptor for query-level validations** (early filtering of bad requests).
+- **AOP** (optional) for **method-level service skipping** logic based on included/excluded fields.
+
+Would you like an example setup for this hybrid model?
