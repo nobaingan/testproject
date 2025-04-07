@@ -596,3 +596,38 @@ You can combine:
 - **AOP** (optional) for **method-level service skipping** logic based on included/excluded fields.
 
 Would you like an example setup for this hybrid model?
+
+
+  String includeOnly = request.getParameter("includeOnly");
+        String excludeOnly = request.getParameter("excludeOnly");
+
+        if (!validateRawEncoding(request.getQueryString(), response)) {
+            return false;
+        }
+
+
+   /**
+     * Validates if query string contains malformed percent-encoded data.
+     */
+    private boolean validateRawEncoding(String queryString, HttpServletResponse response) throws Exception {
+        if (queryString == null || queryString.isEmpty()) return true;
+
+        for (String pair : queryString.split("&")) {
+            int idx = pair.indexOf('=');
+            if (idx == -1) continue;
+
+            String rawValue = pair.substring(idx + 1);
+            try {
+                // Validate percent encoding
+                URLDecoder.decode(rawValue, StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException ex) {
+                response.sendError(HttpServletResponse.SC_BAD_REQUEST,
+                        "Malformed query parameter encoding detected in: " + pair);
+                return false;
+            }
+        }
+        return true;
+    }
+
+
+
