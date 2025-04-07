@@ -497,3 +497,64 @@ public class QueryParamValidationAspect {
         }
     }
 }
+
+import com.example.demo.util.ValidationUtil;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.Mockito;
+
+import javax.servlet.http.HttpServletResponse;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class ValidationUtilTest {
+
+    private HttpServletResponse mockResponse;
+
+    @BeforeEach
+    void setUp() {
+        mockResponse = Mockito.mock(HttpServletResponse.class);
+    }
+
+    @ParameterizedTest(name = "Valid: includeOnly={0}, excludeOnly={1}")
+    @CsvSource({
+        "account.balances, '', true",
+        "'', account.transactions, true",
+        "user.profile.info, '', true",
+        "'', user.address.zipcode, true",
+        "simplefield, '', true"
+    })
+    void testValidInputs(String includeOnly, String excludeOnly, boolean expectedResult) throws Exception {
+        boolean result = ValidationUtil.validateQueryParameters(
+                emptyToNull(includeOnly),
+                emptyToNull(excludeOnly),
+                mockResponse
+        );
+        assertEquals(expectedResult, result);
+    }
+
+    @ParameterizedTest(name = "Invalid: includeOnly={0}, excludeOnly={1}")
+    @CsvSource({
+        "account, account, false",               // Both parameters present
+        "account@name, '', false",               // Invalid characters
+        "'', balance#detail, false",             // Invalid characters
+        "user..name, '', false",                 // Invalid pattern (double dot)
+        "account.balances., '', false",          // Invalid (trailing dot)
+        "account..balances, '', false",          // Invalid (double dot)
+        "account$, '', false"                    // Special character $
+    })
+    void testInvalidInputs(String includeOnly, String excludeOnly, boolean expectedResult) throws Exception {
+        boolean result = ValidationUtil.validateQueryParameters(
+                emptyToNull(includeOnly),
+                emptyToNull(excludeOnly),
+                mockResponse
+        );
+        assertEquals(expectedResult, result);
+        Mockito.verify(mockResponse, Mockito.atLeastOnce()).sendError(Mockito.anyInt(), Mockito.anyString());
+    }
+
+    private String emptyToNull(String str) {
+        return str == null || str.trim().isEmpty() ? null : str;
+    }
+}
