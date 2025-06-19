@@ -1,191 +1,49 @@
-package com.example.demo.util;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ser.FilterProvider;
-import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
-import com.fasterxml.jackson.annotation.JsonFilter;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
-
-import static org.junit.jupiter.api.Assertions.*;
-
-@SpringBootTest
-class DynamicFilterUtilTest {
-
-    private static final Logger logger = LoggerFactory.getLogger(DynamicFilterUtilTest.class);
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
-    /**
-     * Sample DTO with @JsonFilter annotation.
-     */
-    @Data
-    @JsonFilter("AccountDetailsFilter")
-    @AllArgsConstructor
-    static class AccountDetails {
-        private String accountId;
-        private String accountType;
-        private double balance;
-    }
-
-    /**
-     * Test case: Include only 'accountId' field in JSON response.
-     */
-    @Test
-    void testIncludeOnlySingleField() throws JsonProcessingException {
-        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
-
-        Set<String> includeFields = new HashSet<>(Collections.singletonList("accountId"));
-        Set<String> excludeFields = Collections.emptySet();
-
-        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filter);
-
-        String jsonResult = objectMapper.writeValueAsString(details);
-        logger.debug("Filtered JSON (Include accountId): {}", jsonResult);
-
-        assertTrue(jsonResult.contains("accountId"));
-        assertFalse(jsonResult.contains("accountType"));
-        assertFalse(jsonResult.contains("balance"));
-    }
-
-    /**
-     * Test case: Exclude 'balance' field from JSON response.
-     */
-    @Test
-    void testExcludeSingleField() throws JsonProcessingException {
-        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
-
-        Set<String> includeFields = Collections.emptySet();
-        Set<String> excludeFields = new HashSet<>(Collections.singletonList("balance"));
-
-        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filter);
-
-        String jsonResult = objectMapper.writeValueAsString(details);
-        logger.debug("Filtered JSON (Exclude balance): {}", jsonResult);
-
-        assertTrue(jsonResult.contains("accountId"));
-        assertTrue(jsonResult.contains("accountType"));
-        assertFalse(jsonResult.contains("balance"));
-    }
-
-    /**
-     * Test case: Include 'accountId' and 'balance', exclude 'accountType'.
-     */
-    @Test
-    void testIncludeAndExcludeFields() throws JsonProcessingException {
-        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
-
-        Set<String> includeFields = new HashSet<>(Set.of("accountId", "balance"));
-        Set<String> excludeFields = new HashSet<>(Collections.singletonList("accountType"));
-
-        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filter);
-
-        String jsonResult = objectMapper.writeValueAsString(details);
-        logger.debug("Filtered JSON (Include accountId, balance; Exclude accountType): {}", jsonResult);
-
-        assertTrue(jsonResult.contains("accountId"));
-        assertFalse(jsonResult.contains("accountType"));
-        assertTrue(jsonResult.contains("balance"));
-    }
-
-    /**
-     * Test case: Include all fields when includeFields is empty.
-     */
-    @Test
-    void testIncludeAllFields() throws JsonProcessingException {
-        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
-
-        Set<String> includeFields = Collections.emptySet();
-        Set<String> excludeFields = Collections.emptySet();
-
-        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filter);
-
-        String jsonResult = objectMapper.writeValueAsString(details);
-        logger.debug("Filtered JSON (Include all fields): {}", jsonResult);
-
-        assertTrue(jsonResult.contains("accountId"));
-        assertTrue(jsonResult.contains("accountType"));
-        assertTrue(jsonResult.contains("balance"));
-    }
-
-    /**
-     * Test case: Exclude all fields when all are in excludeFields.
-     */
-    @Test
-    void testExcludeAllFields() throws JsonProcessingException {
-        AccountDetails details = new AccountDetails("12345", "Savings", 1500.75);
-
-        Set<String> includeFields = Collections.emptySet();
-        Set<String> excludeFields = new HashSet<>(Set.of("accountId", "accountType", "balance"));
-
-        FilterProvider filter = DynamicFilterUtil.createFilters(includeFields, excludeFields, AccountDetails.class);
-        objectMapper.setFilterProvider(filter);
-
-        String jsonResult = objectMapper.writeValueAsString(details);
-        logger.debug("Filtered JSON (Exclude all fields): {}", jsonResult);
-
-        assertEquals("{}", jsonResult);
-    }
+configurations {
+    jaxb
+    xjc
 }
 
-public static FilterProvider createFilters(Set<String> includeFields, Set<String> excludeFields, Class<?> rootClass) {
-    logger.info("Creating filters for root class: {}", rootClass.getSimpleName());
-    logger.info("Include fields: {}", includeFields);
-    logger.info("Exclude fields: {}", excludeFields);
+dependencies {
+    // JAXB Jakarta dependencies
+    jaxb 'org.glassfish.jaxb:jaxb-xjc:3.0.2'
+    jaxb 'org.glassfish.jaxb:jaxb-runtime:3.0.2'
+    jaxb 'org.glassfish.jaxb:jaxb-core:3.0.2'
+    jaxb 'jakarta.xml.bind:jakarta.xml.bind-api:3.0.1'
+    jaxb 'com.sun.activation:jakarta.activation:2.0.1'
 
-    // If no filters are provided, return a filter that includes all fields (no filtering)
-    if (includeFields.isEmpty() && excludeFields.isEmpty()) {
-        logger.info("No filters provided. Returning unfiltered response.");
-        return buildUnfilteredFilterProvider(rootClass);  // Create a default filter that includes all fields
-    }
+    // JAXB Plugins (ensure they're JAXB 3 compatible)
+    xjc 'org.jvnet.jaxb2_commons:jaxb2-basics:0.12.0'
+    xjc 'org.jvnet.jaxb2_commons:jaxb2-basics-annotate:1.1.1' // Updated for JAXB 3
+    // Optional: Remove this if it causes JAXB 3 incompatibility
+    // xjc 'com.github.jaxb-xew-plugin:jaxb-xew-plugin:1.11'
 
-    Map<String, Set<String>> filters = new HashMap<>();
-    Set<Class<?>> visited = new HashSet<>();
-
-    // Process fields with constraints
-    processFields(includeFields, excludeFields, rootClass, "", filters, visited);
-
-    // Remove filters that have no fields (empty filters)
-    filters.entrySet().removeIf(entry -> entry.getValue().isEmpty());
-
-    // If no filters remain, return a filter that includes all fields (no filtering)
-    if (filters.isEmpty()) {
-        logger.info("No valid filters applied. Returning unfiltered response.");
-        return buildUnfilteredFilterProvider(rootClass);  // Create a default filter that includes all fields
-    }
-
-    logger.info("Generated filters: {}", filters);
-    return buildFilterProvider(filters);
+    xjc 'commons-beanutils:commons-beanutils:1.9.4'
+    xjc 'commons-io:commons-io:2.17.0'
+    xjc 'org.projectlombok:lombok'
 }
 
-private static FilterProvider buildUnfilteredFilterProvider(Class<?> rootClass) {
-    // Create a default filter that includes all fields for the class
-    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
-    SimpleBeanPropertyFilter filter = SimpleBeanPropertyFilter.serializeAll();  // Include all fields
-    filterProvider.addFilter(rootClass.getSimpleName() + "Filter", filter);
-    return filterProvider;
+task generateJaxb(type: JavaExec) {
+    group = 'build'
+    description = 'Generates Java sources from XSD using JAXB 3.x'
+    mainClass.set('com.sun.tools.xjc.XJCFacade')
+    classpath = configurations.jaxb + configurations.xjc
+
+    def schemaDir = file('src/main/resources/schemas/services/Authentic')
+    def outputDir = "$buildDir/generated-sources/jaxb"
+
+    inputs.files fileTree(dir: schemaDir, include: '*.xsd')
+    outputs.dir outputDir
+
+    args = [
+        '-d', outputDir,
+        '-p', 'com.authentic',
+        '-extension',
+        '-b', "$schemaDir/bindings.xjb",
+        '-Xannotate',
+        '-Xinheritance'
+        // If xew plugin is compatible, uncomment the line below
+        // '-Xxew'
+    ] + fileTree(schemaDir).matching { include '*.xsd' }.files*.absolutePath
 }
 
-private static FilterProvider buildFilterProvider(Map<String, Set<String>> filters) {
-    SimpleFilterProvider filterProvider = new SimpleFilterProvider();
-    filters.forEach((className, fields) -> {
-        SimpleBeanPropertyFilter filter = fields.isEmpty() ? SimpleBeanPropertyFilter.filterOutAll() : SimpleBeanPropertyFilter.filterOutAllExcept(fields);
-        filterProvider.addFilter(className, filter);
-        logger.debug("Adding filter for class: {}, Fields: {}", className, fields);
-    });
-    filterProvider.setFailOnUnknownId(false);
-    return filterProvider;
-}
-
+sourceSets.main.java.srcDir "$buildDir/generated-sources/jaxb"
