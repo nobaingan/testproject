@@ -1,62 +1,213 @@
+Here’s a **clean, extensible, production-grade implementation** of application metrics using **Spring Boot + Micrometer + Prometheus**, following **SOLID principles** and **Java best practices**.
 
-@ExtendWith(MockitoExtension.class)
-class SchedulerMetricsTest {
+---
 
-    @Mock
-    private MeterRegistry meterRegistry;
+## ✅ Features
 
-    private SchedulerMetrics schedulerMetrics;
+* Centralized **metric definitions** via `enum`
+* Clean `AppMetricsRegistry` for dynamic registration
+* Supports `Counter` and `Timer`
+* Easy integration in services
+* Micrometer + Prometheus compatible
+* Scalable for 30+ metrics
 
-    @BeforeEach
-    void setUp() {
-        schedulerMetrics = new SchedulerMetrics(meterRegistry);
-        schedulerMetrics.init();
-    }
+---
 
-    static Stream<String> runTypes() {
-        return Stream.of("main", "retry");
-    }
+## 🔧 Tech Stack
 
-    @ParameterizedTest
-    @MethodSource("runTypes")
-    void testSuccessIncrement(String runType) {
-        schedulerMetrics.incrementSuccess(runType);
-        assertEquals(1, schedulerMetrics.getSuccessCount(runType));
-    }
+* **Spring Boot**
+* **Micrometer**
+* **Spring Boot Actuator**
+* **Prometheus** (optional integration)
 
-    @ParameterizedTest
-    @MethodSource("runTypes")
-    void testFailureIncrement(String runType) {
-        schedulerMetrics.incrementFailure(runType);
-        assertEquals(1, schedulerMetrics.getFailureCount(runType));
-    }
+---
 
-    @ParameterizedTest
-    @MethodSource("runTypes")
-    void testResetClearsCounts(String runType) {
-        schedulerMetrics.incrementSuccess(runType);
-        schedulerMetrics.incrementFailure(runType);
-        schedulerMetrics.reset(runType);
+## 🧱 1. MetricType Enum
 
-        assertEquals(0, schedulerMetrics.getSuccessCount(runType));
-        assertEquals(0, schedulerMetrics.getFailureCount(runType));
-        assertEquals(0, schedulerMetrics.getTotalCount(runType));
-        assertTrue(schedulerMetrics.getLastRunTimestamp(runType) > 0);
-    }
-
-    @ParameterizedTest
-    @MethodSource("runTypes")
-    void testGetTimerNotNull(String runType) {
-        Timer timer = schedulerMetrics.getTimer(runType);
-        assertNotNull(timer);
-    }
-
-    @Test
-    void testInvalidRunTypeAccess() {
-        String invalidRunType = "invalid";
-
-        assertThrows(NullPointerException.class, () -> schedulerMetrics.incrementSuccess(invalidRunType));
-        assertThrows(NullPointerException.class, () -> schedulerMetrics.getTimer(invalidRunType));
-        assertThrows(NullPointerException.class, () -> schedulerMetrics.reset(invalidRunType));
-    }
+```java
+public enum MetricType {
+    COUNTER,
+    TIMER
 }
+```
+
+---
+
+## 📦 2. Metric Definition Enum
+
+```java
+public enum AppMetric {
+
+    PUBLISHER_INITIATE_SUCCESS("publisher.send.initiatepaymentmessage.success.total", MetricType.COUNTER, "Initiate payment success"),
+    PUBLISHER_INITIATE_FAILURE("publisher.send.initiatepaymentmessage.failure.total", MetricType.COUNTER, "Initiate payment failure"),
+    PUBLISHER_INITIATE_DURATION("publisher.send.initiatepaymentmessage.duration.seconds", MetricType.TIMER, "Initiate payment processing time"),
+
+    CONSUMER_VRP_SUCCESS("consumer.post.pbb.vrppayments.success.total", MetricType.COUNTER, "VRP success count"),
+    CONSUMER_VRP_FAILURE_4001("consumer.post.pbb.vrppayments.failure.total.errorcode_4001", MetricType.COUNTER, "VRP failure code 4001"),
+    CONSUMER_VRP_DURATION("consumer.post.pbb.vrppayments.duration.seconds", MetricType.TIMER, "VRP call duration"),
+
+    // Add more metrics here...
+
+    ;
+
+    private final String name;
+    private final MetricType type;
+    private final String description;
+
+    AppMetric(String name, MetricType type, String description) {
+        this.name = name;
+        this.type = type;
+        this.description = description;
+    }
+
+    public String getName() { return name; }
+    public MetricType getType() { return type; }
+    public String getDescription() { return description; }
+}
+```
+
+---
+
+## 🧠 3. Central `AppMetricsRegistry`
+
+```java
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import org.springframework.stereotype.Component;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
+@Component
+public class AppMetricsRegistry {
+
+    private final MeterRegistry meterRegistry;
+
+    private final Map<String, Counter> counters = new ConcurrentHashMap<>();
+    private final Map<String, Timer> timers = new ConcurrentHashMap<>();
+
+    public AppMetricsRegistry(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+        registerAll(AppMetric.values());
+    }
+
+    private void registerAll(AppMetric[] metrics) {
+        for (AppMetric metric : metrics) {
+            switch (metric.getType()) {
+                case COUNTER -> counters.put(metric.getName(),
+                        Counter.builder(metric.getName())
+                                .description(metric.getDescription())
+                                .register(meterRegistry));
+                case TIMER -> timers.put(metric.getName(),
+                        Timer.builder(metric.getName())
+                                .description(metric.getDescription())
+                                .register(meterRegistry));
+            }
+        }
+    }
+
+    public void increment(AppMetric metric) {
+        Counter counter = counters.get(metric.getName());
+        if (counter != null) {
+            counter.increment();
+        }
+    }
+
+    public void record(AppMetric metric, long durationMillis) {
+        Timer timer = timers.get(metric.getName());
+        if (timer != null) {
+            timer.record(durationMillis, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    public Timer.Sample startTimer() {
+        return Timer.start(meterRegistry);
+    }
+
+    public void stopTimer(Timer.Sample sample, AppMetric metric) {
+        Timer timer = timers.get(metric.getName());
+        if (timer != null && sample != null) {
+            sample.stop(timer);
+        }
+    }
+}
+```
+
+---
+
+## 🧪 4. Using Metrics in a Service
+
+```java
+import org.springframework.stereotype.Service;
+
+@Service
+public class PaymentService {
+
+    private final AppMetricsRegistry metrics;
+
+    public PaymentService(AppMetricsRegistry metrics) {
+        this.metrics = metrics;
+    }
+
+    public void sendInitiatePaymentMessage() {
+        Timer.Sample sample = metrics.startTimer();
+        try {
+            // Simulate business logic
+            // ...
+
+            metrics.increment(AppMetric.PUBLISHER_INITIATE_SUCCESS);
+        } catch (Exception e) {
+            metrics.increment(AppMetric.PUBLISHER_INITIATE_FAILURE);
+        } finally {
+            metrics.stopTimer(sample, AppMetric.PUBLISHER_INITIATE_DURATION);
+        }
+    }
+}
+```
+
+---
+
+## ⚙️ 5. `application.yml` for Actuator + Prometheus
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus, health, metrics
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+```
+
+---
+
+## 🔍 Prometheus Endpoint
+
+Micrometer exposes all your metrics here:
+
+```
+GET http://localhost:8080/actuator/prometheus
+```
+
+Search by name (e.g., `publisher_send_initiatepaymentmessage_success_total`).
+
+---
+
+## ✅ Summary
+
+| Feature                   | Included |
+| ------------------------- | -------- |
+| Centralized metric naming | ✅        |
+| Clean service usage       | ✅        |
+| Supports counter + timer  | ✅        |
+| Autocomplete & safety     | ✅        |
+| Scalable to 100+ metrics  | ✅        |
+| Prometheus-ready          | ✅        |
+
+---
+
+Would you like a script or utility to auto-generate 30+ `AppMetric` enum entries from a list of metric names?
