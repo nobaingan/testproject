@@ -37,18 +37,62 @@ public enum MetricType {
 
 ```java
 public enum AppMetric {
+    // Publisher metrics
+    PUBLISHER_DB_ACTIVE_RECURRING_SUCCESS("publisher.db.activerecurringpayment.success.total", MetricType.COUNTER, "Publisher DB active recurring payment success count"),
+    PUBLISHER_DB_ACTIVE_RECURRING_FAILURE("publisher.db.activerecurringpayment.failure.total", MetricType.COUNTER, "Publisher DB active recurring payment failure count"),
+    PUBLISHER_DB_ACTIVE_RECURRING_DURATION("publisher.db.read.activerecurringpayments.duration.seconds", MetricType.TIMER, "Publisher DB active recurring payments read duration"),
 
-    PUBLISHER_INITIATE_SUCCESS("publisher.send.initiatepaymentmessage.success.total", MetricType.COUNTER, "Initiate payment success"),
-    PUBLISHER_INITIATE_FAILURE("publisher.send.initiatepaymentmessage.failure.total", MetricType.COUNTER, "Initiate payment failure"),
-    PUBLISHER_INITIATE_DURATION("publisher.send.initiatepaymentmessage.duration.seconds", MetricType.TIMER, "Initiate payment processing time"),
+    PUBLISHER_INITIATEPAYMENT_MSG_SUCCESS("publisher.amd.initiatepayment.message.success.total", MetricType.COUNTER, "Publisher initiate payment message success count"),
+    PUBLISHER_INITIATEPAYMENT_MSG_FAILURE("publisher.send.initiatepaymentmessage.failure.total", MetricType.COUNTER, "Publisher initiate payment message failure count"),
+    PUBLISHER_INITIATEPAYMENT_MSG_RETRIES("publisher.send.initiatepaymentmessage.retries.total", MetricType.COUNTER, "Publisher initiate payment message retries count"),
 
-    CONSUMER_VRP_SUCCESS("consumer.post.pbb.vrppayments.success.total", MetricType.COUNTER, "VRP success count"),
-    CONSUMER_VRP_FAILURE_4001("consumer.post.pbb.vrppayments.failure.total.errorcode_4001", MetricType.COUNTER, "VRP failure code 4001"),
-    CONSUMER_VRP_DURATION("consumer.post.pbb.vrppayments.duration.seconds", MetricType.TIMER, "VRP call duration"),
+    PUBLISHER_UPDATE_RECURRING_PAYMENT_ID_SUCCESS("publisher.db.update.recurringpayment.id.success.total", MetricType.COUNTER, "Publisher DB update recurring payment ID success count"),
+    PUBLISHER_UPDATE_RECURRING_PAYMENT_ID_FAILURE("publisher.db.update.recurringpayment.id.failure.total", MetricType.COUNTER, "Publisher DB update recurring payment ID failure count"),
+    PUBLISHER_UPDATE_RECURRING_PAYMENT_ID_DURATION("publisher.db.update.recurringpayment.id.duration.seconds", MetricType.TIMER, "Publisher DB update recurring payment ID duration"),
 
-    // Add more metrics here...
+    PUBLISHER_UPDATE_AUDIT_PAYMENT_QUEUED_SUCCESS("publisher.db.update.auditpayment.queued.success.total", MetricType.COUNTER, "Publisher DB update audit payment queued success count"),
+    PUBLISHER_UPDATE_AUDIT_PAYMENT_QUEUED_FAILURE("publisher.db.update.auditpayment.queued.failure.total", MetricType.COUNTER, "Publisher DB update audit payment queued failure count"),
+    PUBLISHER_UPDATE_AUDIT_PAYMENT_QUEUED_DURATION("publisher.db.update.auditpayment.queued.duration.seconds", MetricType.TIMER, "Publisher DB update audit payment queued duration"),
 
-    ;
+    // Consumer metrics
+    CONSUMER_DB_READ_ACTIVE_RECURRING_WITH_NEW_TX_SUCCESS("consumer.db.read.activerecurringpayment.withnewtransaction.success.total", MetricType.COUNTER, "Consumer DB read active recurring payment with new transaction success count"),
+    CONSUMER_DB_READ_ACTIVE_RECURRING_WITH_NEW_TX_FAILURE("consumer.db.read.activerecurringpayment.withnewtransaction.failure.total", MetricType.COUNTER, "Consumer DB read active recurring payment with new transaction failure count"),
+    CONSUMER_DB_READ_ACTIVE_RECURRING_WITH_NEW_TX_DURATION("consumer.db.read.activerecurringpayment.withnewtransaction.duration.seconds", MetricType.TIMER, "Consumer DB read active recurring payment with new transaction duration"),
+
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_RECEIVED_SUCCESS("consumer.db.update.auditpayment.received.success.total", MetricType.COUNTER, "Consumer DB update audit payment received success count"),
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_RECEIVED_FAILURE("consumer.db.update.auditpayment.received.failure.total", MetricType.COUNTER, "Consumer DB update audit payment received failure count"),
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_RECEIVED_DURATION("consumer.db.update.auditpayment.received.duration.seconds", MetricType.TIMER, "Consumer DB update audit payment received duration"),
+
+    CONSUMER_POST_PBB_VRP_PAYMENTS_SUCCESS("consumer.post.pbb.vrppayments.success.total", MetricType.COUNTER, "Consumer post PBB VRP payments success count"),
+    CONSUMER_POST_PBB_VRP_PAYMENTS_FAILURE("consumer.post.pbb.vrppayments.failure.total", MetricType.COUNTER, "Consumer post PBB VRP payments failure count"),
+    CONSUMER_POST_PBB_VRP_PAYMENTS_FAILURE_4001("consumer.post.pbb.vrppayments.failure.total.errorcode_4001", MetricType.COUNTER, "Consumer post PBB VRP payments failure with error code 4001"),
+    CONSUMER_POST_PBB_VRP_PAYMENTS_FAILURE_409("consumer.post.pbb.vrppayments.failure.total.errorcode_409", MetricType.COUNTER, "Consumer post PBB VRP payments failure with error code 409"),
+    CONSUMER_POST_PBB_VRP_PAYMENTS_DURATION("consumer.post.pbb.vrppayments.duration.seconds", MetricType.TIMER, "Consumer post PBB VRP payments duration"),
+
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_FAILURE_SUCCESS("consumer.db.update.auditpayment.failure.success.total", MetricType.COUNTER, "Consumer DB update audit payment failure-success count"),
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_FAILURE_FAILURE("consumer.db.update.auditpayment.failure.failure.total", MetricType.COUNTER, "Consumer DB update audit payment failure-failure count"),
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_FAILURE_DURATION("consumer.db.update.auditpayment.failure.duration.seconds", MetricType.TIMER, "Consumer DB update audit payment failure duration"),
+
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_SUCCESS_SUCCESS("consumer.db.update.auditpaymentsuccess.success.total", MetricType.COUNTER, "Consumer DB update audit payment success-success count"),
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_SUCCESS_FAILURE("consumer.db.update.auditpaymentsuccess.failure.total", MetricType.COUNTER, "Consumer DB update audit payment success-failure count"),
+    CONSUMER_DB_UPDATE_AUDIT_PAYMENT_SUCCESS_DURATION("consumer.db.update.auditpaymentsuccess.duration.seconds", MetricType.TIMER, "Consumer DB update audit payment success duration"),
+
+    CONSUMER_RECEIVE_PROCESS_INITIATE_PAYMENT_MSG_SUCCESS("consumer.receive.processinitiatepayment.message.success.total", MetricType.COUNTER, "Consumer receive process initiate payment message success count"),
+    CONSUMER_RECEIVE_PROCESS_INITIATE_PAYMENT_MSG_FAILURE("consumer.receive.processinitiatepayment.message.failure.total", MetricType.COUNTER, "Consumer receive process initiate payment message failure count (no retries)"),
+
+    CONSUMER_REQUEUE_PROCESS_INITIATE_PAYMENT_MSG_SUCCESS("consumer.requeue.processinitiatepayment.message.success.total", MetricType.COUNTER, "Consumer requeue process initiate payment message success count"),
+    CONSUMER_REQUEUE_PROCESS_INITIATE_PAYMENT_MSG_FAILURE("consumer.requeue.processinitiatepayment.message.failure.total", MetricType.COUNTER, "Consumer requeue process initiate payment message failure count"),
+
+    CONSUMER_FAILED_INITIATE_PAYMENT_GETCUSTOMER_SUCCESS("consumer.failed.initiatepayment.getcustomer.success.total", MetricType.COUNTER, "Consumer failed initiate payment get customer success count"),
+    CONSUMER_FAILED_INITIATE_PAYMENT_GETCUSTOMER_FAILURE("consumer.failed.initiatepayment.getcustomer.failure.total", MetricType.COUNTER, "Consumer failed initiate payment get customer failure count"),
+    CONSUMER_FAILED_INITIATE_PAYMENT_GETCUSTOMER_DURATION("consumer.failed.initiatepayment.getcustomer.duration.seconds", MetricType.TIMER, "Consumer failed initiate payment get customer duration"),
+
+    CONSUMER_FAILED_INITIATE_PAYMENT_SEND_EMAIL_SUCCESS("consumer.failed.initiatepayment.sendemail.success.total", MetricType.COUNTER, "Consumer failed initiate payment send email success count"),
+    CONSUMER_FAILED_INITIATE_PAYMENT_SEND_EMAIL_FAILURE("consumer.failed.initiatepayment.sendemail.failure.total", MetricType.COUNTER, "Consumer failed initiate payment send email failure count"),
+    CONSUMER_FAILED_INITIATE_PAYMENT_SEND_EMAIL_DURATION("consumer.failed.initiatepayment.sendemail.duration.seconds", MetricType.TIMER, "Consumer failed initiate payment send email duration"),
+
+    PUBLISHER_SEND_INITIATEPAYMENTMESSAGE_DURATION("publisher.send.initiatepaymentmessage.duration.seconds", MetricType.TIMER, "Publisher send initiate payment message duration"),
+    CONSUMER_RECEIVE_PROCESS_INITIATEPAYMENT_DURATION("consumer.receive.processinitiatepayment.duration.seconds", MetricType.TIMER, "Consumer receive process initiate payment duration");
 
     private final String name;
     private final MetricType type;
@@ -64,6 +108,8 @@ public enum AppMetric {
     public MetricType getType() { return type; }
     public String getDescription() { return description; }
 }
+
+
 ```
 
 ---
